@@ -2,36 +2,31 @@
   "taskId": "019dc08a-f53d-708a-80a6-bdb21162c5e5",
   "todos": [
     {
-      "id": "8db71abd2bdf6be1e394beec9888237d",
-      "content": "梳理现有 led/key/encoder/buzzer 分层模式与目标模块现状",
-      "status": "completed"
+      "id": "39988f7642a2d743765f21fa0d8f8492",
+      "content": "梳理 MPU6050 原驱动接口与现有 IMU/ICM42688 封装风格",
+      "status": "in_progress"
     },
     {
-      "id": "fcc1bc3ac25851a1f47de64af9bb771b",
-      "content": "设计 oled/icm42688/xunji/motor/stepper 的 ops、device、board、facade、compat 分层方案",
-      "status": "completed"
+      "id": "b60b9f036e13ec9e78b87e24c4b5e1cc",
+      "content": "设计 MPU6050 Device/Board/Facade/Compat 融合方式",
+      "status": "pending"
     },
     {
-      "id": "dca562d84751712c561ee6c367c205ff",
-      "content": "修改 core ops 与目标模块底层驱动封装",
-      "status": "completed"
+      "id": "2e376dd3db6909ad615f666e2b2dfb3f",
+      "content": "实现 MPU6050 封装并接入 IMU 体系",
+      "status": "pending"
     },
     {
-      "id": "ebff1ea135190545952f9cb12231b090",
-      "content": "新增/调整 board、facade、int/driver 兼容层文件",
-      "status": "completed"
+      "id": "53e88dce2ac14457249df37ddad46646",
+      "content": "语法检查并修复问题",
+      "status": "pending"
     },
     {
-      "id": "10cd1454610e444d163744eca2976570",
-      "content": "编译或语法检查并修复问题",
-      "status": "completed"
-    },
-    {
-      "id": "de62f8e6d3dadb84726449c50e095952",
-      "content": "总结修改内容与注意事项",
-      "status": "completed"
+      "id": "176ffda68f75da5ba19172de7e2a067d",
+      "content": "总结修改内容与后续使用方式",
+      "status": "pending"
     }
   ],
-  "lastUpdated": 1777054214427,
+  "lastUpdated": 1777097558834,
   "status": "active"
 }

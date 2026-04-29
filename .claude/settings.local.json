@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3)",
+      "Bash(git mv *)",
+      "Bash(sed -i 's|#include \"../4_board/motor_board.h\"|#include \"motor_board.h\"|g' 4_board/motor_int.h)",
+      "Bash(sed -i 's|#include \"../4_board/oled_board.h\"|#include \"oled_board.h\"|g' 4_board/OLED_int.h)",
+      "Bash(sed -i 's|#include \"../4_board/xunji_board.h\"|#include \"xunji_board.h\"|g' 4_board/xunji_int.h)",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}

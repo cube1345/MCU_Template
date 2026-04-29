@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<?xml version='1.0' encoding='UTF-8'?>
 <Project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="project_projx.xsd">
 
   <SchemaVersion>2.1</SchemaVersion>
@@ -20,28 +20,28 @@
           <PackID>TexasInstruments.MSPM0G1X0X_G3X0X_DFP.1.3.1</PackID>
           <PackURL>https://software-dl.ti.com/msp430/esd/MSPM0-CMSIS/MSPM0G1X0X_G3X0X/latest/exports/</PackURL>
           <Cpu>IRAM(0x20000000,0x00008000) IRAM2(0x20100000,0x00008000) IROM(0x00000000,0x00020000) IROM2(0x00400000,0x00020000) XRAM(0x20200000,0x00008000) XRAM2(0x20300000,0x00008000) CPUTYPE("Cortex-M0+") CLOCK(12000000) ELITTLE</Cpu>
-          <FlashUtilSpec></FlashUtilSpec>
-          <StartupFile></StartupFile>
-          <FlashDriverDll></FlashDriverDll>
-          <DeviceId></DeviceId>
-          <RegisterFile></RegisterFile>
-          <MemoryEnv></MemoryEnv>
-          <Cmp></Cmp>
-          <Asm></Asm>
-          <Linker></Linker>
-          <OHString></OHString>
-          <InfinionOptionDll></InfinionOptionDll>
-          <SLE66CMisc></SLE66CMisc>
-          <SLE66AMisc></SLE66AMisc>
-          <SLE66LinkerMisc></SLE66LinkerMisc>
+          <FlashUtilSpec />
+          <StartupFile />
+          <FlashDriverDll />
+          <DeviceId />
+          <RegisterFile />
+          <MemoryEnv />
+          <Cmp />
+          <Asm />
+          <Linker />
+          <OHString />
+          <InfinionOptionDll />
+          <SLE66CMisc />
+          <SLE66AMisc />
+          <SLE66LinkerMisc />
           <SFDFile>$$Device:MSPM0G3507$03_SVD\MSPM0G350X.svd</SFDFile>
           <bCustSvd>0</bCustSvd>
           <UseEnv>0</UseEnv>
-          <BinPath></BinPath>
-          <IncludePath></IncludePath>
-          <LibPath></LibPath>
-          <RegisterFilePath></RegisterFilePath>
-          <DBRegisterFilePath></DBRegisterFilePath>
+          <BinPath />
+          <IncludePath />
+          <LibPath />
+          <RegisterFilePath />
+          <DBRegisterFilePath />
           <TargetStatus>
             <Error>0</Error>
             <ExitCodeStop>0</ExitCodeStop>
@@ -63,8 +63,8 @@
           <BeforeCompile>
             <RunUserProg1>0</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
-            <UserProg1Name></UserProg1Name>
-            <UserProg2Name></UserProg2Name>
+            <UserProg1Name />
+            <UserProg2Name />
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
             <nStopU1X>0</nStopU1X>
@@ -74,7 +74,7 @@
             <RunUserProg1>1</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
             <UserProg1Name>cmd.exe /C "$P../syscfg.bat '$P' empty.syscfg"</UserProg1Name>
-            <UserProg2Name></UserProg2Name>
+            <UserProg2Name />
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
             <nStopB1X>0</nStopB1X>
@@ -83,15 +83,15 @@
           <AfterMake>
             <RunUserProg1>0</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
-            <UserProg1Name></UserProg1Name>
-            <UserProg2Name></UserProg2Name>
+            <UserProg1Name />
+            <UserProg2Name />
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
             <nStopA1X>0</nStopA1X>
             <nStopA2X>0</nStopA2X>
           </AfterMake>
           <SelectedForBatchBuild>0</SelectedForBatchBuild>
-          <SVCSIdString></SVCSIdString>
+          <SVCSIdString />
         </TargetCommonOption>
         <CommonProperty>
           <UseCPPCompiler>0</UseCPPCompiler>
@@ -105,8 +105,8 @@
           <AssembleAssemblyFile>0</AssembleAssemblyFile>
           <PublicsOnly>0</PublicsOnly>
           <StopOnExitCode>3</StopOnExitCode>
-          <CustomArgument></CustomArgument>
-          <IncludeLibraryModules></IncludeLibraryModules>
+          <CustomArgument />
+          <IncludeLibraryModules />
           <ComprImg>1</ComprImg>
         </CommonProperty>
         <DllOption>
@@ -140,10 +140,10 @@
           <bUseTDR>0</bUseTDR>
           <Flash2>BIN\CMSIS_AGDI.dll</Flash2>
           <Flash3>"" ()</Flash3>
-          <Flash4></Flash4>
-          <pFcarmOut></pFcarmOut>
-          <pFcarmGrp></pFcarmGrp>
-          <pFcArmRoot></pFcArmRoot>
+          <Flash4 />
+          <pFcarmOut />
+          <pFcarmGrp />
+          <pFcArmRoot />
           <FcArmLst>0</FcArmLst>
         </Utilities>
         <TargetArmAds>
@@ -176,7 +176,7 @@
             <RvctClst>0</RvctClst>
             <GenPPlst>0</GenPPlst>
             <AdsCpuType>"Cortex-M0+"</AdsCpuType>
-            <RvctDeviceName></RvctDeviceName>
+            <RvctDeviceName />
             <mOS>0</mOS>
             <uocRom>0</uocRom>
             <uocRam>0</uocRam>
@@ -311,7 +311,7 @@
                 <Size>0x8000</Size>
               </OCR_RVCT10>
             </OnChipMemories>
-            <RvctStartVector></RvctStartVector>
+            <RvctStartVector />
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
@@ -338,10 +338,10 @@
             <v6WtE>0</v6WtE>
             <v6Rtti>0</v6Rtti>
             <VariousControls>
-              <MiscControls></MiscControls>
+              <MiscControls />
               <Define>__MSPM0G3507__</Define>
-              <Undefine></Undefine>
-              <IncludePath>..\source\third_party\CMSIS\Core\Include;..\source;..\MyUsed\MyDrivers;..\MyUsed\MyInts;..\MyUsed\MyLibs;..\MyUsed\MyBSP;..\Mid;..\Mid\include;..\Mid\portable;..\Mid\source;..\..\msp_freertos_module;..\MyUsed\MyApps;..\..\2026secondrace</IncludePath>
+              <Undefine />
+              <IncludePath>..\source\third_party\CMSIS\Core\Include;..\source;..\2_core;..\1_platform;..\3_device;..\5_compat;..\4_board;..\5_facade;..\6_libs;..\0_bsp;..\Mid;..\Mid\include;..\Mid\portable;..\Mid\source;..\..\msp_freertos_module;..\7_apps;..\..\2026secondrace</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -356,10 +356,10 @@
             <useXO>0</useXO>
             <ClangAsOpt>1</ClangAsOpt>
             <VariousControls>
-              <MiscControls></MiscControls>
-              <Define></Define>
-              <Undefine></Undefine>
-              <IncludePath></IncludePath>
+              <MiscControls />
+              <Define />
+              <Undefine />
+              <IncludePath />
             </VariousControls>
           </Aads>
           <LDads>
@@ -369,15 +369,15 @@
             <noStLib>0</noStLib>
             <RepFail>1</RepFail>
             <useFile>0</useFile>
-            <TextAddressRange></TextAddressRange>
-            <DataAddressRange></DataAddressRange>
-            <pXoBase></pXoBase>
+            <TextAddressRange />
+            <DataAddressRange />
+            <pXoBase />
             <ScatterFile>./mspm0g3507.sct</ScatterFile>
-            <IncludeLibs></IncludeLibs>
-            <IncludeLibsPath></IncludeLibsPath>
+            <IncludeLibs />
+            <IncludeLibsPath />
             <Misc>E:\EmbeddedDevelopment\SoftWare\CCS\TI\mspm0_sdk_2_01_00_03\source\ti\driverlib\lib\keil\m0p\mspm0g1x0x_g3x0x\driverlib.a</Misc>
-            <LinkerInputFile></LinkerInputFile>
-            <DisabledWarnings></DisabledWarnings>
+            <LinkerInputFile />
+            <DisabledWarnings />
           </LDads>
         </TargetArmAds>
       </TargetOption>
@@ -903,307 +903,272 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>MyUsed/My_Drivers</GroupName>
+          <GroupName>5_compat</GroupName>
           <Files>
-            <File>
-              <FileName>OLED_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\OLED_driver.c</FilePath>
-            </File>
             <File>
               <FileName>OLED_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\OLED_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>key_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\key_driver.c</FilePath>
+              <FilePath>..\5_compat\OLED_driver.h</FilePath>
             </File>
             <File>
               <FileName>key_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\key_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>icm42688_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\icm42688_driver.c</FilePath>
+              <FilePath>..\5_compat\key_driver.h</FilePath>
             </File>
             <File>
               <FileName>icm42688_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\icm42688_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>buzzer_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\buzzer_driver.c</FilePath>
+              <FilePath>..\5_compat\icm42688_driver.h</FilePath>
             </File>
             <File>
               <FileName>buzzer_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\buzzer_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>led_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\led_driver.c</FilePath>
+              <FilePath>..\5_compat\buzzer_driver.h</FilePath>
             </File>
             <File>
               <FileName>led_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\led_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>xunji_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\xunji_driver.c</FilePath>
+              <FilePath>..\5_compat\led_driver.h</FilePath>
             </File>
             <File>
               <FileName>xunji_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\xunji_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>motor_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\motor_driver.c</FilePath>
+              <FilePath>..\5_compat\xunji_driver.h</FilePath>
             </File>
             <File>
               <FileName>motor_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\motor_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>encoder_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\encoder_driver.c</FilePath>
+              <FilePath>..\5_compat\motor_driver.h</FilePath>
             </File>
             <File>
               <FileName>encoder_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\encoder_driver.h</FilePath>
-            </File>
-            <File>
-              <FileName>stepper_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyDrivers\stepper_driver.c</FilePath>
+              <FilePath>..\5_compat\encoder_driver.h</FilePath>
             </File>
             <File>
               <FileName>stepper_driver.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyDrivers\stepper_driver.h</FilePath>
+              <FilePath>..\5_compat\stepper_driver.h</FilePath>
             </File>
           </Files>
         </Group>
-        <Group>
-          <GroupName>MyUsed/My_Ints</GroupName>
-          <Files>
-            <File>
+        <Group><GroupName>3_device</GroupName><Files><File><FileName>OLED_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\OLED_driver.c</FilePath></File><File><FileName>buzzer_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\buzzer_driver.c</FilePath></File><File><FileName>encoder_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\encoder_driver.c</FilePath></File><File><FileName>icm42688_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\icm42688_driver.c</FilePath></File><File><FileName>key_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\key_driver.c</FilePath></File><File><FileName>led_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\led_driver.c</FilePath></File><File><FileName>motor_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\motor_driver.c</FilePath></File><File><FileName>stepper_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\stepper_driver.c</FilePath></File><File><FileName>xunji_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\xunji_driver.c</FilePath></File><File><FileName>mpu6050_driver.c</FileName><FileType>1</FileType><FilePath>..\3_device\mpu6050_driver.c</FilePath></File></Files></Group><Group><GroupName>4_board</GroupName><Files><File><FileName>buzzer_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\buzzer_board.c</FilePath></File><File><FileName>encoder_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\encoder_board.c</FilePath></File><File><FileName>icm42688_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\icm42688_board.c</FilePath></File><File><FileName>key_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\key_board.c</FilePath></File><File><FileName>led_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\led_board.c</FilePath></File><File><FileName>motor_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\motor_board.c</FilePath></File><File><FileName>oled_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\oled_board.c</FilePath></File><File><FileName>stepper_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\stepper_board.c</FilePath></File><File><FileName>xunji_board.c</FileName><FileType>1</FileType><FilePath>..\4_board\xunji_board.c</FilePath></File><File>
               <FileName>buzzer_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\buzzer_int.c</FilePath>
+              <FilePath>..\4_board\buzzer_int.c</FilePath>
             </File>
             <File>
               <FileName>buzzer_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\buzzer_int.h</FilePath>
+              <FilePath>..\4_board\buzzer_int.h</FilePath>
             </File>
             <File>
               <FileName>icm42688_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\icm42688_int.c</FilePath>
+              <FilePath>..\4_board\icm42688_int.c</FilePath>
             </File>
             <File>
               <FileName>icm42688_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\icm42688_int.h</FilePath>
+              <FilePath>..\4_board\icm42688_int.h</FilePath>
             </File>
             <File>
               <FileName>key_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\key_int.c</FilePath>
+              <FilePath>..\4_board\key_int.c</FilePath>
             </File>
             <File>
               <FileName>key_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\key_int.h</FilePath>
+              <FilePath>..\4_board\key_int.h</FilePath>
             </File>
             <File>
               <FileName>led_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\led_int.c</FilePath>
+              <FilePath>..\4_board\led_int.c</FilePath>
             </File>
             <File>
               <FileName>led_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\led_int.h</FilePath>
+              <FilePath>..\4_board\led_int.h</FilePath>
             </File>
             <File>
               <FileName>OLED_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\OLED_int.c</FilePath>
+              <FilePath>..\4_board\OLED_int.c</FilePath>
             </File>
             <File>
               <FileName>OLED_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\OLED_int.h</FilePath>
+              <FilePath>..\4_board\OLED_int.h</FilePath>
             </File>
             <File>
               <FileName>xunji_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\xunji_int.c</FilePath>
+              <FilePath>..\4_board\xunji_int.c</FilePath>
             </File>
             <File>
               <FileName>xunji_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\xunji_int.h</FilePath>
+              <FilePath>..\4_board\xunji_int.h</FilePath>
             </File>
             <File>
               <FileName>motor_int.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyInts\motor_int.c</FilePath>
+              <FilePath>..\4_board\motor_int.c</FilePath>
             </File>
             <File>
               <FileName>motor_int.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyInts\motor_int.h</FilePath>
+              <FilePath>..\4_board\motor_int.h</FilePath>
             </File>
-          </Files>
-        </Group>
-        <Group>
-          <GroupName>MyUsed/My_Libs</GroupName>
+            <File>
+              <FileName>mpu6050_board.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\4_board\mpu6050_board.c</FilePath>
+            </File>
+            <File>
+              <FileName>mpu6050_int.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\4_board\mpu6050_int.c</FilePath>
+            </File>
+            <File>
+              <FileName>mpu6050_int.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\4_board\mpu6050_int.h</FilePath>
+            </File>
+          </Files></Group><Group><GroupName>5_facade</GroupName><Files><File><FileName>buzzer_facade.c</FileName><FileType>1</FileType><FilePath>..\5_facade\buzzer_facade.c</FilePath></File><File><FileName>encoder_facade.c</FileName><FileType>1</FileType><FilePath>..\5_facade\encoder_facade.c</FilePath></File><File><FileName>key_facade.c</FileName><FileType>1</FileType><FilePath>..\5_facade\key_facade.c</FilePath></File><File><FileName>led_facade.c</FileName><FileType>1</FileType><FilePath>..\5_facade\led_facade.c</FilePath></File></Files></Group><Group><GroupName>1_platform</GroupName><Files><File><FileName>platform_gpio.c</FileName><FileType>1</FileType><FilePath>..\1_platform\platform_gpio.c</FilePath></File></Files></Group><Group>
+          <GroupName>6_libs</GroupName>
           <Files>
             <File>
               <FileName>my_system_lib.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyLibs\my_system_lib.c</FilePath>
+              <FilePath>..\6_libs\my_system_lib.c</FilePath>
             </File>
             <File>
               <FileName>my_system_lib.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyLibs\my_system_lib.h</FilePath>
+              <FilePath>..\6_libs\my_system_lib.h</FilePath>
             </File>
             <File>
               <FileName>OLED_Data.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyLibs\OLED_Data.c</FilePath>
+              <FilePath>..\6_libs\OLED_Data.c</FilePath>
             </File>
             <File>
               <FileName>OLED_Data.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyLibs\OLED_Data.h</FilePath>
+              <FilePath>..\6_libs\OLED_Data.h</FilePath>
             </File>
             <File>
               <FileName>OLED_menu.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyLibs\OLED_menu.c</FilePath>
+              <FilePath>..\6_libs\OLED_menu.c</FilePath>
             </File>
             <File>
               <FileName>OLED_menu.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyLibs\OLED_menu.h</FilePath>
+              <FilePath>..\6_libs\OLED_menu.h</FilePath>
             </File>
             <File>
               <FileName>IMU.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyLibs\IMU.c</FilePath>
+              <FilePath>..\6_libs\IMU.c</FilePath>
             </File>
             <File>
               <FileName>IMU.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyLibs\IMU.h</FilePath>
+              <FilePath>..\6_libs\IMU.h</FilePath>
             </File>
             <File>
               <FileName>my_math.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyLibs\my_math.c</FilePath>
+              <FilePath>..\6_libs\my_math.c</FilePath>
             </File>
             <File>
               <FileName>my_math.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyLibs\my_math.h</FilePath>
+              <FilePath>..\6_libs\my_math.h</FilePath>
             </File>
           </Files>
         </Group>
         <Group>
-          <GroupName>MyUsed/My_BSP</GroupName>
+          <GroupName>0_bsp</GroupName>
           <Files>
             <File>
               <FileName>bsp_iic.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_iic.c</FilePath>
+              <FilePath>..\0_bsp\bsp_iic.c</FilePath>
             </File>
             <File>
               <FileName>bsp_iic.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_iic.h</FilePath>
+              <FilePath>..\0_bsp\bsp_iic.h</FilePath>
             </File>
             <File>
               <FileName>bsp_spi.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_spi.c</FilePath>
+              <FilePath>..\0_bsp\bsp_spi.c</FilePath>
             </File>
             <File>
               <FileName>bsp_spi.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_spi.h</FilePath>
+              <FilePath>..\0_bsp\bsp_spi.h</FilePath>
             </File>
             <File>
               <FileName>bsp_gpio.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_gpio.c</FilePath>
+              <FilePath>..\0_bsp\bsp_gpio.c</FilePath>
             </File>
             <File>
               <FileName>bsp_gpio.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyBSP\bsp_gpio.h</FilePath>
+              <FilePath>..\0_bsp\bsp_gpio.h</FilePath>
             </File>
           </Files>
         </Group>
         <Group>
-          <GroupName>MyUsed/My_Apps</GroupName>
+          <GroupName>7_apps</GroupName>
           <Files>
             <File>
               <FileName>car_app.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyApps\car_app.c</FilePath>
+              <FilePath>..\7_apps\car_app.c</FilePath>
             </File>
             <File>
               <FileName>car_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyApps\car_app.h</FilePath>
+              <FilePath>..\7_apps\car_app.h</FilePath>
             </File>
             <File>
               <FileName>xunji_app.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyApps\xunji_app.c</FilePath>
+              <FilePath>..\7_apps\xunji_app.c</FilePath>
             </File>
             <File>
               <FileName>xunji_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyApps\xunji_app.h</FilePath>
+              <FilePath>..\7_apps\xunji_app.h</FilePath>
             </File>
             <File>
               <FileName>usart_app.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyApps\usart_app.c</FilePath>
+              <FilePath>..\7_apps\usart_app.c</FilePath>
             </File>
             <File>
               <FileName>usart_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyApps\usart_app.h</FilePath>
+              <FilePath>..\7_apps\usart_app.h</FilePath>
             </File>
             <File>
               <FileName>yuntai_app.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\MyUsed\MyApps\yuntai_app.c</FilePath>
+              <FilePath>..\7_apps\yuntai_app.c</FilePath>
             </File>
             <File>
               <FileName>yuntai_app.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\MyUsed\MyApps\yuntai_app.h</FilePath>
+              <FilePath>..\7_apps\yuntai_app.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -1212,9 +1177,9 @@
   </Targets>
 
   <RTE>
-    <apis/>
-    <components/>
-    <files/>
+    <apis />
+    <components />
+    <files />
   </RTE>
 
   <LayerInfo>

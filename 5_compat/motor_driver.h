@@ -1,0 +1,6 @@
+#ifndef MYUSED_MYDRIVERS_MOTOR_DRIVER_COMPAT_H
+#define MYUSED_MYDRIVERS_MOTOR_DRIVER_COMPAT_H
+
+#include "../5_facade/motor_facade.h"
+
+#endif /* MYUSED_MYDRIVERS_MOTOR_DRIVER_COMPAT_H */
