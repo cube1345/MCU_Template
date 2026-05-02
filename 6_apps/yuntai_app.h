@@ -192,7 +192,7 @@ void Yuntai_GetDefaultDirectionCalConfig(Yuntai_DirectionCalConfig_t *config);
 /**
  * @brief 使用默认参数初始化云台应用层
  *
- * @note 该函数会调用 @ref Stepper_Init ，随后将两轴保持在“停止 + 失能”状态，
+ * @note 该函数会调用 @ref Stepper_Board_Init ，随后将两轴保持在”停止 + 失能”状态，
  *       不会在初始化阶段自动输出脉冲。
  */
 void Yuntai_App_Init(void);

@@ -558,7 +558,7 @@ void Yuntai_App_InitWithConfig(const Yuntai_AppConfig_t *config)
         g_yuntaiConfig.syncReversePeriodMs = YUNTAI_DEFAULT_SYNC_REVERSE_PERIOD_MS;
     }
 
-    Stepper_Init();
+    Stepper_Board_Init();
 
     Yuntai_ApplyAxisConfig(YUNTAI_AXIS_YAW,
                            g_yuntaiConfig.yawFrequencyHz,

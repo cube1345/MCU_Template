@@ -955,6 +955,11 @@
               <FileType>1</FileType>
               <FilePath>..\2_device\mpu6050_driver.c</FilePath>
             </File>
+            <File>
+              <FileName>mt6701_driver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\2_device\mt6701_driver.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -1004,6 +1009,16 @@
               <FileName>mpu6050_board.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\3_board\mpu6050_board.c</FilePath>
+            </File>
+            <File>
+              <FileName>mt6701_board.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\3_board\mt6701_board.c</FilePath>
+            </File>
+            <File>
+              <FileName>stepper_board.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\3_board\stepper_board.c</FilePath>
             </File>
             <File>
               <FileName>uart_board.c</FileName>
@@ -1144,6 +1159,11 @@
               <FileName>hal_uart.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\0_hal\hal_uart.h</FilePath>
+            </File>
+            <File>
+              <FileName>hal_timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\0_hal\hal_timer.c</FilePath>
             </File>
           </Files>
         </Group>

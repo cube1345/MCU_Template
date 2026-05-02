@@ -39,6 +39,26 @@ void HAL_GPIO_ClearPin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin)
     DL_GPIO_clearPins(GPIOx, GPIO_Pin);
 }
 
+void HAL_GPIO_InitOutput(uint32_t iomux)
+{
+    DL_GPIO_initDigitalOutput(iomux);
+}
+
+void HAL_GPIO_InitInput(uint32_t iomux)
+{
+    DL_GPIO_initDigitalInput(iomux);
+}
+
+void HAL_GPIO_InitPeripheralOutput(uint32_t iomux, uint32_t iomuxFunc)
+{
+    DL_GPIO_initPeripheralOutputFunction(iomux, iomuxFunc);
+}
+
+void HAL_GPIO_EnableOutput(GPIO_Regs *GPIOx, uint32_t GPIO_Pin)
+{
+    DL_GPIO_enableOutput(GPIOx, GPIO_Pin);
+}
+
 void Platform_GPIO_Write(const platform_gpio_t *gpio, uint8_t value)
 {
     if (gpio == 0) {

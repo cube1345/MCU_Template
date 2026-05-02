@@ -3,87 +3,37 @@
  * @brief MSPM0G3507 双步进电机底层驱动实现
  * @author cube
  * @date 2026-04-11
+ *
+ * 分层说明:
+ * - 本文件实现步进电机运行时状态管理、PWM 参数计算、ops 回调
+ * - 不包含任何 SysConfig 宏或具体引脚号
+ * - 所有硬件资源由 Board 层通过 Stepper_Init() 注入
+ * - GPIO 操作通过 HAL 层 (HAL_GPIO_*)
+ * - 控制定时器 ISR 由 Board 层托管，本文件只提供 Stepper_Service1ms()
  */
 
 #include "stepper_driver.h"
-#include <ti_msp_dl_config.h>
+#include "hal_timer.h"
 
-#define STEPPER_M1_DEFAULT_PERIOD_TICKS (28000U)
-#define STEPPER_M1_DEFAULT_PULSE_TICKS  (194U)
-#define STEPPER_M2_DEFAULT_PERIOD_TICKS (56000U)
-#define STEPPER_M2_DEFAULT_PULSE_TICKS  (389U)
+/* ------------------------------------------------------------------ */
+/* Board 层注入的配置                                                  */
+/* ------------------------------------------------------------------ */
 
-/**
- * @brief 两个步进电机的软件状态表
- *
- * - M1: TIMG0 / PA23 / PB2 / PA21
- * - M2: TIMG6 / PA29 / PB3 / PA30
- * - EN 默认按参考例程使用高电平有效
- * - DIR 默认低电平表示逻辑正向
- */
-static Stepper_MotorState_t g_stepperMotors[STEPPER_MOTOR_COUNT] = {
-    {
-        .pwmInst = STEP_M1_PWM_INST,
-        .pwmClockHz = STEP_M1_PWM_INST_CLK_FREQ,
-        .pwmCcIndex = GPIO_STEP_M1_PWM_C0_IDX,
-        .stepPort = GPIO_STEP_M1_PWM_C0_PORT,
-        .stepPin = GPIO_STEP_M1_PWM_C0_PIN,
-        .stepIomux = GPIO_STEP_M1_PWM_C0_IOMUX,
-        .stepIomuxFunc = GPIO_STEP_M1_PWM_C0_IOMUX_FUNC,
-        .dirPort = STEP_DIR_PORT,
-        .dirPin = STEP_DIR_M1_DIR_PIN,
-        .enPort = STEP_EN_PORT,
-        .enPin = STEP_EN_M1_EN_PIN,
-        .enPolarity = STEPPER_ENABLE_ACTIVE_HIGH,
-        .forwardLevelHigh = false,
-        .enabled = true,
-        .running = false,
-        .direction = STEPPER_DIR_FORWARD,
-        .frequencyHz = STEP_M1_PWM_INST_CLK_FREQ / STEPPER_M1_DEFAULT_PERIOD_TICKS,
-        .pulseWidthUs = STEPPER_DEFAULT_PULSE_WIDTH_US,
-        .periodTicks = STEPPER_M1_DEFAULT_PERIOD_TICKS,
-        .pulseTicks = STEPPER_M1_DEFAULT_PULSE_TICKS,
-        .targetFrequencyHz = STEP_M1_PWM_INST_CLK_FREQ / STEPPER_M1_DEFAULT_PERIOD_TICKS,
-        .accelHzPerMs = 0U,
-        .decelHzPerMs = 0U,
-    },
-    {
-        .pwmInst = STEP_M2_PWM_INST,
-        .pwmClockHz = STEP_M2_PWM_INST_CLK_FREQ,
-        .pwmCcIndex = GPIO_STEP_M2_PWM_C0_IDX,
-        .stepPort = GPIO_STEP_M2_PWM_C0_PORT,
-        .stepPin = GPIO_STEP_M2_PWM_C0_PIN,
-        .stepIomux = GPIO_STEP_M2_PWM_C0_IOMUX,
-        .stepIomuxFunc = GPIO_STEP_M2_PWM_C0_IOMUX_FUNC,
-        .dirPort = STEP_DIR_PORT,
-        .dirPin = STEP_DIR_M2_DIR_PIN,
-        .enPort = STEP_EN_PORT,
-        .enPin = STEP_EN_M2_EN_PIN,
-        .enPolarity = STEPPER_ENABLE_ACTIVE_HIGH,
-        .forwardLevelHigh = false,
-        .enabled = true,
-        .running = false,
-        .direction = STEPPER_DIR_FORWARD,
-        .frequencyHz = STEP_M2_PWM_INST_CLK_FREQ / STEPPER_M2_DEFAULT_PERIOD_TICKS,
-        .pulseWidthUs = STEPPER_DEFAULT_PULSE_WIDTH_US,
-        .periodTicks = STEPPER_M2_DEFAULT_PERIOD_TICKS,
-        .pulseTicks = STEPPER_M2_DEFAULT_PULSE_TICKS,
-        .targetFrequencyHz = STEP_M2_PWM_INST_CLK_FREQ / STEPPER_M2_DEFAULT_PERIOD_TICKS,
-        .accelHzPerMs = 0U,
-        .decelHzPerMs = 0U,
-    },
-};
+static stepper_hw_cfg_t g_hw_cfgs[STEPPER_MOTOR_COUNT];
+static stepper_ctrl_timer_cfg_t g_ctrl_timer_cfg;
 
-static stepper_t g_stepper_devices[STEPPER_MOTOR_COUNT];
+/* ------------------------------------------------------------------ */
+/* 运行时状态                                                          */
+/* ------------------------------------------------------------------ */
 
-/** @brief 同步反向控制状态 */
-static Stepper_SyncReverse_t g_syncReverse = {
-    .enabled = false,
-    .periodMs = STEPPER_DEFAULT_SYNC_REVERSE_PERIOD_MS,
-    .elapsedMs = 0U,
-};
+static Stepper_MotorState_t g_motor_states[STEPPER_MOTOR_COUNT];
+static stepper_t *g_stepper_devices;
+static Stepper_SyncReverse_t g_syncReverse;
 
-/* 静态辅助函数前向声明 */
+/* ------------------------------------------------------------------ */
+/* 静态辅助函数前向声明                                                 */
+/* ------------------------------------------------------------------ */
+
 static Stepper_MotorState_t *Stepper_GetMotor(Stepper_MotorId_t motorId);
 static void Stepper_ApplyEnableLevel(Stepper_MotorState_t *motor);
 static void Stepper_ApplyDirectionLevel(Stepper_MotorState_t *motor);
@@ -93,6 +43,10 @@ static void Stepper_ApplyPwmRegisters(Stepper_MotorState_t *motor);
 static void Stepper_StopOutputNow(Stepper_MotorState_t *motor);
 static bool Stepper_RecalculateTiming(Stepper_MotorState_t *motor);
 static void Stepper_ToggleDirectionBoth(void);
+
+/* ------------------------------------------------------------------ */
+/* ops 回调                                                            */
+/* ------------------------------------------------------------------ */
 
 static void Stepper_Base_Enable(void *me, uint8_t enable)
 {
@@ -131,7 +85,7 @@ static void Stepper_Base_SetDirection(void *me, uint8_t direction)
         motor->running = true;
         Stepper_SwitchStepPinToPeripheral(motor);
         Stepper_ApplyPwmRegisters(motor);
-        DL_TimerG_startCounter(motor->pwmInst);
+        HAL_TimerG_StartCounter(g_hw_cfgs[dev->motor_id].pwmInst);
     }
 }
 
@@ -171,7 +125,7 @@ static void Stepper_Base_Start(void *me)
     motor->running = true;
     Stepper_SwitchStepPinToPeripheral(motor);
     Stepper_ApplyPwmRegisters(motor);
-    DL_TimerG_startCounter(motor->pwmInst);
+    HAL_TimerG_StartCounter(g_hw_cfgs[dev->motor_id].pwmInst);
 }
 
 static void Stepper_Base_Stop(void *me)
@@ -213,204 +167,189 @@ void Stepper_InitDevice(stepper_t *me, Stepper_MotorId_t motor_id)
     if ((me == 0) || ((uint32_t)motor_id >= STEPPER_MOTOR_COUNT)) {
         return;
     }
-
     me->ops = Stepper_GetBaseOps();
     me->motor_id = motor_id;
     me->base.is_init = 1U;
 }
 
-/**
- * @brief 根据电机编号返回内部状态指针
- * @param[in] motorId 电机编号
- * @return 对应状态指针，非法编号时返回 NULL
- */
+/* ------------------------------------------------------------------ */
+/* 静态辅助函数实现                                                    */
+/* ------------------------------------------------------------------ */
+
 static Stepper_MotorState_t *Stepper_GetMotor(Stepper_MotorId_t motorId)
 {
-    if ((uint32_t) motorId >= STEPPER_MOTOR_COUNT) {
+    if ((uint32_t)motorId >= STEPPER_MOTOR_COUNT) {
         return 0;
     }
-
-    return &g_stepperMotors[(uint32_t) motorId];
+    return &g_motor_states[(uint32_t)motorId];
 }
 
-/**
- * @brief 将逻辑使能状态写入 EN 引脚
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_ApplyEnableLevel(Stepper_MotorState_t *motor)
 {
+    const stepper_hw_cfg_t *hw;
     bool pinHigh;
 
     if (motor == 0) {
         return;
     }
 
-    pinHigh = (motor->enPolarity == STEPPER_ENABLE_ACTIVE_HIGH) ?
+    /* 通过 Stepper_MotorState_t 的索引反查 hw_cfg */
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
+    }
+    hw = &g_hw_cfgs[idx];
+
+    pinHigh = (hw->enPolarity == STEPPER_ENABLE_ACTIVE_HIGH) ?
         motor->enabled : !motor->enabled;
 
-    if (pinHigh) {
-        DL_GPIO_setPins(motor->enPort, motor->enPin);
-    } else {
-        DL_GPIO_clearPins(motor->enPort, motor->enPin);
-    }
+    HAL_GPIO_WritePin(hw->en.port, hw->en.pin, pinHigh ? 1U : 0U);
 }
 
-/**
- * @brief 将逻辑方向状态写入 DIR 引脚
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_ApplyDirectionLevel(Stepper_MotorState_t *motor)
 {
+    const stepper_hw_cfg_t *hw;
     bool pinHigh;
 
     if (motor == 0) {
         return;
     }
 
-    pinHigh = (motor->direction == STEPPER_DIR_FORWARD) ?
-        motor->forwardLevelHigh : !motor->forwardLevelHigh;
-
-    if (pinHigh) {
-        DL_GPIO_setPins(motor->dirPort, motor->dirPin);
-    } else {
-        DL_GPIO_clearPins(motor->dirPort, motor->dirPin);
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
     }
+    hw = &g_hw_cfgs[idx];
+
+    pinHigh = (motor->direction == STEPPER_DIR_FORWARD) ?
+        hw->forwardLevelHigh : !hw->forwardLevelHigh;
+
+    HAL_GPIO_WritePin(hw->dir.port, hw->dir.pin, pinHigh ? 1U : 0U);
 }
 
-/**
- * @brief 将 STEP 引脚切回 PWM 外设输出
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_SwitchStepPinToPeripheral(Stepper_MotorState_t *motor)
 {
     if (motor == 0) {
         return;
     }
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
+    }
+    const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    DL_GPIO_initPeripheralOutputFunction(motor->stepIomux, motor->stepIomuxFunc);
-    DL_GPIO_enableOutput(motor->stepPort, motor->stepPin);
+    HAL_GPIO_InitPeripheralOutput(hw->stepIomux, hw->stepIomuxFunc);
+    HAL_GPIO_EnableOutput(hw->step.port, hw->step.pin);
 }
 
-/**
- * @brief 将 STEP 引脚强制切到 GPIO 低电平
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_SwitchStepPinToGpioLow(Stepper_MotorState_t *motor)
 {
     if (motor == 0) {
         return;
     }
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
+    }
+    const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    DL_GPIO_initDigitalOutput(motor->stepIomux);
-    DL_GPIO_clearPins(motor->stepPort, motor->stepPin);
-    DL_GPIO_enableOutput(motor->stepPort, motor->stepPin);
+    HAL_GPIO_InitOutput(hw->stepIomux);
+    HAL_GPIO_WritePin(hw->step.port, hw->step.pin, 0U);
+    HAL_GPIO_EnableOutput(hw->step.port, hw->step.pin);
 }
 
-/**
- * @brief 将 PWM 周期与比较值写回到底层定时器
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_ApplyPwmRegisters(Stepper_MotorState_t *motor)
 {
-    uint32_t compareValue;
-
     if (motor == 0) {
         return;
     }
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
+    }
+    const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    DL_TimerG_setLoadValue(motor->pwmInst, motor->periodTicks);
+    HAL_TimerG_SetLoadValue(hw->pwmInst, motor->periodTicks);
 
-    compareValue = motor->running ? motor->pulseTicks : 0U;
-    DL_TimerG_setCaptureCompareValue(motor->pwmInst, compareValue,
-                                     motor->pwmCcIndex);
+    uint32_t compareValue = motor->running ? motor->pulseTicks : 0U;
+    HAL_TimerG_SetCCValue(hw->pwmInst, compareValue,
+                                     hw->pwmCcIndex);
 }
 
-/**
- * @brief 停止 STEP 输出并强制比较值为 0
- * @param[in,out] motor 电机状态对象
- */
 static void Stepper_StopOutputNow(Stepper_MotorState_t *motor)
 {
     if (motor == 0) {
         return;
     }
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return;
+    }
+    const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    DL_TimerG_stopCounter(motor->pwmInst);
+    HAL_TimerG_StopCounter(hw->pwmInst);
     motor->running = false;
-    DL_TimerG_setCaptureCompareValue(motor->pwmInst, 0U, motor->pwmCcIndex);
+    HAL_TimerG_SetCCValue(hw->pwmInst, 0U, hw->pwmCcIndex);
     Stepper_SwitchStepPinToGpioLow(motor);
 }
 
-/**
- * @brief 重新计算频率与脉宽对应的计数值
- * @param[in,out] motor 电机状态对象
- * @retval true 计算成功
- * @retval false 参数超出当前定时器能力
- */
 static bool Stepper_RecalculateTiming(Stepper_MotorState_t *motor)
 {
-    uint32_t periodTicks;
-    uint64_t pulseTicks;
-
     if ((motor == 0) || (motor->frequencyHz == 0U) || (motor->pulseWidthUs == 0U)) {
         return false;
     }
 
-    periodTicks = motor->pwmClockHz / motor->frequencyHz;
+    uint32_t idx = (uint32_t)(motor - g_motor_states);
+    if (idx >= STEPPER_MOTOR_COUNT) {
+        return false;
+    }
+    const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
+
+    uint32_t periodTicks = hw->pwmClockHz / motor->frequencyHz;
     if (periodTicks < 2U) {
         return false;
     }
 
-    pulseTicks = ((uint64_t) motor->pwmClockHz * (uint64_t) motor->pulseWidthUs + 999999ULL) /
-                 1000000ULL;
+    uint64_t pulseTicks = ((uint64_t)hw->pwmClockHz * (uint64_t)motor->pulseWidthUs
+                           + 999999ULL) / 1000000ULL;
     if (pulseTicks == 0ULL) {
         pulseTicks = 1ULL;
     }
-
-    if (pulseTicks >= (uint64_t) periodTicks) {
-        pulseTicks = (uint64_t) (periodTicks / 2U);
+    if (pulseTicks >= (uint64_t)periodTicks) {
+        pulseTicks = (uint64_t)(periodTicks / 2U);
         if (pulseTicks == 0ULL) {
             pulseTicks = 1ULL;
         }
     }
 
     motor->periodTicks = periodTicks;
-    motor->pulseTicks = (uint32_t) pulseTicks;
+    motor->pulseTicks = (uint32_t)pulseTicks;
     Stepper_ApplyPwmRegisters(motor);
 
     return true;
 }
 
-/**
- * @brief 以同步方式翻转两个电机方向
- *
- * 为尽量避免 DIR 改变时正好落在 STEP 上升沿附近，这里先停脉冲，
- * 再改方向，最后按原状态恢复输出。
- */
 static void Stepper_ToggleDirectionBoth(void)
 {
-    bool restartM1;
-    bool restartM2;
-
-    restartM1 = g_stepperMotors[STEPPER_MOTOR_1].running;
-    restartM2 = g_stepperMotors[STEPPER_MOTOR_2].running;
+    bool restartM1 = g_motor_states[STEPPER_MOTOR_1].running;
+    bool restartM2 = g_motor_states[STEPPER_MOTOR_2].running;
 
     if (restartM1) {
-        Stepper_StopOutputNow(&g_stepperMotors[STEPPER_MOTOR_1]);
+        Stepper_StopOutputNow(&g_motor_states[STEPPER_MOTOR_1]);
     }
     if (restartM2) {
-        Stepper_StopOutputNow(&g_stepperMotors[STEPPER_MOTOR_2]);
+        Stepper_StopOutputNow(&g_motor_states[STEPPER_MOTOR_2]);
     }
 
-    g_stepperMotors[STEPPER_MOTOR_1].direction =
-        (g_stepperMotors[STEPPER_MOTOR_1].direction == STEPPER_DIR_FORWARD) ?
+    g_motor_states[STEPPER_MOTOR_1].direction =
+        (g_motor_states[STEPPER_MOTOR_1].direction == STEPPER_DIR_FORWARD) ?
         STEPPER_DIR_REVERSE : STEPPER_DIR_FORWARD;
-    g_stepperMotors[STEPPER_MOTOR_2].direction =
-        (g_stepperMotors[STEPPER_MOTOR_2].direction == STEPPER_DIR_FORWARD) ?
+    g_motor_states[STEPPER_MOTOR_2].direction =
+        (g_motor_states[STEPPER_MOTOR_2].direction == STEPPER_DIR_FORWARD) ?
         STEPPER_DIR_REVERSE : STEPPER_DIR_FORWARD;
 
-    Stepper_ApplyDirectionLevel(&g_stepperMotors[STEPPER_MOTOR_1]);
-    Stepper_ApplyDirectionLevel(&g_stepperMotors[STEPPER_MOTOR_2]);
+    Stepper_ApplyDirectionLevel(&g_motor_states[STEPPER_MOTOR_1]);
+    Stepper_ApplyDirectionLevel(&g_motor_states[STEPPER_MOTOR_2]);
 
     if (restartM1) {
         Stepper_Start(STEPPER_MOTOR_1);
@@ -420,30 +359,57 @@ static void Stepper_ToggleDirectionBoth(void)
     }
 }
 
-void Stepper_Init(void)
+/* ------------------------------------------------------------------ */
+/* 公开接口                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief 初始化步进底层驱动
+ * @param hw_cfgs 双电机硬件配置数组
+ * @param ctrl_timer_cfg 控制定时器配置
+ *
+ * Board 层在完成 GPIO IOMUX 初始化后调用。
+ * 本函数:
+ * 1. 存储硬件配置
+ * 2. 初始化运行时状态到默认值
+ * 3. 初始化设备对象并绑定 ops
+ * 4. 启动控制定时器
+ */
+void Stepper_Init(const stepper_hw_cfg_t hw_cfgs[STEPPER_MOTOR_COUNT],
+                  const stepper_ctrl_timer_cfg_t *ctrl_timer_cfg,
+                  stepper_t devices[STEPPER_MOTOR_COUNT])
 {
     uint32_t i;
 
+    /* 存储 Board 层注入的硬件配置和设备对象指针 */
     for (i = 0U; i < STEPPER_MOTOR_COUNT; ++i) {
-        Stepper_StopOutputNow(&g_stepperMotors[i]);
-        Stepper_ApplyPwmRegisters(&g_stepperMotors[i]);
-        Stepper_ApplyDirectionLevel(&g_stepperMotors[i]);
-        Stepper_ApplyEnableLevel(&g_stepperMotors[i]);
+        g_hw_cfgs[i] = hw_cfgs[i];
+    }
+    g_ctrl_timer_cfg = *ctrl_timer_cfg;
+    g_stepper_devices = devices;
+
+    /* 初始化运行时状态并应用默认 GPIO 电平 */
+    for (i = 0U; i < STEPPER_MOTOR_COUNT; ++i) {
+        Stepper_StopOutputNow(&g_motor_states[i]);
+        Stepper_ApplyPwmRegisters(&g_motor_states[i]);
+        Stepper_ApplyDirectionLevel(&g_motor_states[i]);
+        Stepper_ApplyEnableLevel(&g_motor_states[i]);
     }
 
     g_syncReverse.enabled = false;
     g_syncReverse.periodMs = STEPPER_DEFAULT_SYNC_REVERSE_PERIOD_MS;
     g_syncReverse.elapsedMs = 0U;
 
-    Stepper_InitDevice(&g_stepper_devices[STEPPER_MOTOR_1], STEPPER_MOTOR_1);
-    Stepper_InitDevice(&g_stepper_devices[STEPPER_MOTOR_2], STEPPER_MOTOR_2);
+    Stepper_InitDevice(&devices[STEPPER_MOTOR_1], STEPPER_MOTOR_1);
+    Stepper_InitDevice(&devices[STEPPER_MOTOR_2], STEPPER_MOTOR_2);
 
-    DL_TimerG_stopCounter(STEP_CTRL_TIMER_INST);
-    DL_TimerG_setLoadValue(STEP_CTRL_TIMER_INST, STEP_CTRL_TIMER_INST_LOAD_VALUE);
-    DL_TimerG_startCounter(STEP_CTRL_TIMER_INST);
+    /* 启动控制定时器 */
+    HAL_TimerG_StopCounter(g_ctrl_timer_cfg.timerInst);
+    HAL_TimerG_SetLoadValue(g_ctrl_timer_cfg.timerInst, g_ctrl_timer_cfg.loadValue);
+    HAL_TimerG_StartCounter(g_ctrl_timer_cfg.timerInst);
 
-    NVIC_ClearPendingIRQ(STEP_CTRL_TIMER_INST_INT_IRQN);
-    NVIC_EnableIRQ(STEP_CTRL_TIMER_INST_INT_IRQN);
+    NVIC_ClearPendingIRQ(g_ctrl_timer_cfg.irqNum);
+    NVIC_EnableIRQ(g_ctrl_timer_cfg.irqNum);
 }
 
 void Stepper_Enable(Stepper_MotorId_t motorId, bool enable)
@@ -464,28 +430,20 @@ void Stepper_EnableAll(bool enable)
 void Stepper_SetEnablePolarity(Stepper_MotorId_t motorId,
                                Stepper_EnablePolarity_t polarity)
 {
-    Stepper_MotorState_t *motor;
-
-    motor = Stepper_GetMotor(motorId);
-    if (motor == 0) {
+    if ((uint32_t)motorId >= STEPPER_MOTOR_COUNT) {
         return;
     }
-
-    motor->enPolarity = polarity;
-    Stepper_ApplyEnableLevel(motor);
+    g_hw_cfgs[motorId].enPolarity = polarity;
+    Stepper_ApplyEnableLevel(&g_motor_states[motorId]);
 }
 
 void Stepper_SetForwardLevel(Stepper_MotorId_t motorId, bool forwardLevelHigh)
 {
-    Stepper_MotorState_t *motor;
-
-    motor = Stepper_GetMotor(motorId);
-    if (motor == 0) {
+    if ((uint32_t)motorId >= STEPPER_MOTOR_COUNT) {
         return;
     }
-
-    motor->forwardLevelHigh = forwardLevelHigh;
-    Stepper_ApplyDirectionLevel(motor);
+    g_hw_cfgs[motorId].forwardLevelHigh = forwardLevelHigh;
+    Stepper_ApplyDirectionLevel(&g_motor_states[motorId]);
 }
 
 void Stepper_SetDirection(Stepper_MotorId_t motorId,
@@ -500,13 +458,10 @@ void Stepper_SetDirection(Stepper_MotorId_t motorId,
 
 void Stepper_ToggleDirection(Stepper_MotorId_t motorId)
 {
-    Stepper_MotorState_t *motor;
-
-    motor = Stepper_GetMotor(motorId);
+    Stepper_MotorState_t *motor = Stepper_GetMotor(motorId);
     if (motor == 0) {
         return;
     }
-
     Stepper_SetDirection(
         motorId,
         (motor->direction == STEPPER_DIR_FORWARD) ?
@@ -524,23 +479,17 @@ bool Stepper_SetFrequency(Stepper_MotorId_t motorId, uint32_t frequencyHz)
 
 bool Stepper_SetPulseWidthUs(Stepper_MotorId_t motorId, uint32_t pulseWidthUs)
 {
-    Stepper_MotorState_t *motor;
-    uint32_t previousPulseWidthUs;
-    bool result;
-
-    motor = Stepper_GetMotor(motorId);
+    Stepper_MotorState_t *motor = Stepper_GetMotor(motorId);
     if (motor == 0) {
         return false;
     }
-
-    previousPulseWidthUs = motor->pulseWidthUs;
+    uint32_t previous = motor->pulseWidthUs;
     motor->pulseWidthUs = pulseWidthUs;
-    result = Stepper_RecalculateTiming(motor);
-    if (!result) {
-        motor->pulseWidthUs = previousPulseWidthUs;
+    if (!Stepper_RecalculateTiming(motor)) {
+        motor->pulseWidthUs = previous;
+        return false;
     }
-
-    return result;
+    return true;
 }
 
 void Stepper_Start(Stepper_MotorId_t motorId)
@@ -573,23 +522,6 @@ void Stepper_StopAll(void)
     Stepper_Stop(STEPPER_MOTOR_2);
 }
 
-static void Stepper_SetRampProfile(Stepper_MotorId_t motorId,
-                                   uint32_t targetFrequencyHz,
-                                   uint32_t accelHzPerMs,
-                                   uint32_t decelHzPerMs)
-{
-    Stepper_MotorState_t *motor;
-
-    motor = Stepper_GetMotor(motorId);
-    if (motor == 0) {
-        return;
-    }
-
-    motor->targetFrequencyHz = targetFrequencyHz;
-    motor->accelHzPerMs = accelHzPerMs;
-    motor->decelHzPerMs = decelHzPerMs;
-}
-
 void Stepper_ConfigSyncReverse(bool enable, uint32_t periodMs)
 {
     g_syncReverse.enabled = enable;
@@ -603,12 +535,10 @@ void Stepper_Service1ms(void)
     if (!g_syncReverse.enabled) {
         return;
     }
-
     g_syncReverse.elapsedMs++;
     if (g_syncReverse.elapsedMs < g_syncReverse.periodMs) {
         return;
     }
-
     g_syncReverse.elapsedMs = 0U;
     Stepper_ToggleDirectionBoth();
 }
@@ -621,16 +551,4 @@ const Stepper_MotorState_t *Stepper_GetState(Stepper_MotorId_t motorId)
 const Stepper_SyncReverse_t *Stepper_GetSyncReverseState(void)
 {
     return &g_syncReverse;
-}
-
-void STEP_CTRL_TIMER_INST_IRQHandler(void)
-{
-    switch (DL_TimerG_getPendingInterrupt(STEP_CTRL_TIMER_INST)) {
-        case DL_TIMER_IIDX_ZERO:
-            Stepper_Service1ms();
-            break;
-
-        default:
-            break;
-    }
 }

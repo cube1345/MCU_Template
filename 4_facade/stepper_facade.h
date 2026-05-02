@@ -7,5 +7,6 @@
  */
 
 #include "../2_device/stepper_driver.h"
+#include "../3_board/stepper_board.h"
 
 #endif /* MYUSED_MYFACADES_STEPPER_FACADE_H */
