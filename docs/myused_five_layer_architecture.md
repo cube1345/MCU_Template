@@ -11,7 +11,7 @@
 - BSP 与 HAL 的区别：HAL 在底层（`0_hal`），BSP 由 Device + Board 共同构成；
 - 后续新增外设时应遵守的设计原则。
 
-当前工程已经将 LED、Key、Encoder、Buzzer、OLED、ICM42688、MPU6050、Xunji、Motor、Stepper 等模块逐步整理为类似的分层结构。
+当前工程已经将 LED、Key、Encoder、Buzzer、OLED、ICM42688、MPU6050、Xunji、Motor、Stepper、MT6701 等模块逐步整理为类似的分层结构。
 
 ---
 
@@ -177,9 +177,10 @@ Core 层不依赖具体硬件，不依赖 SysConfig，不依赖某个具体外�
 
 典型文件：
 
-- `hal_gpio.h/.c` — GPIO 通用读写封装
+- `hal_gpio.h/.c` — GPIO 通用读写、初始化封装
 - `hal_gpio_int.h/.c` — GPIO 中断状态读写封装
 - `hal_iic.h/.c` — I2C 控制器驱动
+- `hal_timer.h/.c` — TimerG 定时器/PWM 封装
 - `hal_uart.h/.c` — UART 基础收发
 
 ### 5.2 HAL 层职责
@@ -742,12 +743,20 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 保留双步进电机底层状态表；
-- 定义 `stepper_t`；
+- 定义 `stepper_t`、`Stepper_MotorState_t`、`Stepper_SyncReverse_t`；
+- 定义板级注入结构 `stepper_hw_cfg_t`、`stepper_ctrl_timer_cfg_t`；
 - 继承 `device_stepper_ops_t`；
-- 封装使能、方向、频率、启动、停止、服务节拍；
-- 保留 `Stepper_Init()`、`Stepper_Start()`、`Stepper_Stop()` 等旧接口；
-- 保留 `STEP_CTRL_TIMER_INST_IRQHandler()`。
+- 实现 ops 回调：`Stepper_Base_Enable`、`Stepper_Base_SetDirection`、`Stepper_Base_SetFrequency`、`Stepper_Base_Start`、`Stepper_Base_Stop`、`Stepper_Base_Service`；
+- 提供 `Stepper_InitDevice()` 绑定 ops 到具体设备对象；
+- 提供全局 API：`Stepper_Enable()`、`Stepper_Start()`、`Stepper_Stop()`、`Stepper_SetFrequency()` 等，内部通过 `g_stepper_devices[id].ops->xxx()` 路由至 ops；
+- 实现 `Stepper_Service1ms()` 同步反向逻辑；
+- 所有 GPIO 操作通过 `HAL_GPIO_*`，所有 Timer 操作通过 `HAL_TimerG_*`；
+- 零 SysConfig 宏，零 `DL_GPIO_*` / `DL_TimerG_*` 直接调用。
+
+> **设计要点**：
+> - 设备对象 `stepper_t devices[2]` 由 Board 层分配并通过 `Stepper_Init()` 注入，Device 层只保存指针 `static stepper_t *g_stepper_devices`；
+> - 运行时状态（`g_motor_states[]`）与板级硬件配置（`g_hw_cfgs[]`）完全分离，硬件配置通过 `stepper_hw_cfg_t` 由 Board 层注入；
+> - STEP 引脚在 PWM 外设模式和 GPIO 低电平模式之间动态切换，通过 `HAL_GPIO_InitPeripheralOutput` / `HAL_GPIO_InitOutput` 实现。
 
 ### Board 层
 
@@ -758,8 +767,59 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 提供步进电机板级初始化入口；
-- 后续建议将定时器实例、GPIO、ISR 进一步迁移到 Board 层。
+- 声明设备对象数组 `stepper_t g_stepper_devices[2]`（M1 偏航角、M2 俯仰角）；
+- 初始化 EN/DIR GPIO 引脚为数字输出（STEP 引脚由 SysConfig `SYSCFG_DL_STEP_M1_PWM_init` / `SYSCFG_DL_STEP_M2_PWM_init` 配置为定时器外设功能）；
+- 填充 `stepper_hw_cfg_t[2]`（PWM 定时器实例、时钟频率、CC 通道、STEP/DIR/EN 引脚 IOMUX）和 `stepper_ctrl_timer_cfg_t`（控制定时器实例、重载值、IRQ 号）；
+- 提供 `Stepper_Board_Init()` 完成 GPIO 初始化并调用 `Stepper_Init(hw_cfgs, &ctrl_timer_cfg, g_stepper_devices)` 注入 Device 层；
+- 提供 `Stepper_Board_GetDevice(motorId)` 返回指定轴设备对象指针；
+- 托管 `TIMG12_IRQHandler` ISR，每 1ms 调用 `Stepper_Service1ms()`；
+- 所有 GPIO 操作通过 `HAL_GPIO_*`，所有 Timer 中断查询通过 `HAL_TimerG_GetPendingInterrupt`。
+
+### Facade 层
+
+文件：
+
+- `4_facade/stepper_facade.h`
+
+职责：
+
+- 聚合 `stepper_driver.h` 和 `stepper_board.h`，为业务层提供统一 include 入口。
+
+---
+
+## 10.11 MT6701 磁编码器
+
+### Device 层
+
+文件：
+
+- `2_device/mt6701_driver.h`
+- `2_device/mt6701_driver.c`
+
+职责：
+
+- 实现 SSI 协议 GPIO 软件位拆解（24-bit 帧，MSB first，CPOL=0/CPHA=1）；
+- 实现 CRC-6 校验（多项式 `0x43`），角度 raw → rad/deg 换算；
+- 实现 1ms 速度计算服务 `MT6701_Service1ms()`；
+- 定义板级注入结构 `mt6701_bus_cfg_t`（共享 SCLK/DO + 独立 CSN 引脚）；
+- 提供 `MT6701_Init(const mt6701_bus_cfg_t *bus_cfg)` 接收 Board 层引脚配置；
+- 零硬编码引脚号，所有 GPIO 操作通过 `HAL_GPIO_*`。
+
+> **设计要点**：两片 MT6701 共享 SCLK 与 DO，通过各自 CSN 片选分时读取。Device 层不包含任何具体引脚号，引脚信息由 Board 层通过 `mt6701_bus_cfg_t` 注入。
+
+### Board 层
+
+文件：
+
+- `3_board/mt6701_board.h`
+- `3_board/mt6701_board.c`
+
+职责：
+
+- 定义两片 MT6701 在当前板上的具体引脚接线（共享 SCLK→PA3、共享 DO→PA2、M1 CSN→PA4、M2 CSN→PB0）；
+- 通过 `HAL_GPIO_InitOutput` / `HAL_GPIO_InitInput` 初始化 GPIO IOMUX；
+- 填充 `mt6701_bus_cfg_t` 并调用 `MT6701_Init(&bus_cfg)` 注入 Device 层；
+- 零 `DL_GPIO_*` 直接调用。
 
 ---
 
@@ -1024,9 +1084,10 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 
 | 文件 | 职责 |
 | --- | --- |
-| `hal_gpio.h/.c` | GPIO 读写、翻转（`HAL_GPIO_WritePin`、`HAL_GPIO_ReadPin`、`HAL_GPIO_TogglePin`） |
+| `hal_gpio.h/.c` | GPIO 读写、翻转、初始化（`HAL_GPIO_WritePin`、`HAL_GPIO_ReadPin`、`HAL_GPIO_TogglePin`、`HAL_GPIO_InitOutput`、`HAL_GPIO_InitInput`、`HAL_GPIO_InitPeripheralOutput`、`HAL_GPIO_EnableOutput`） |
 | `hal_gpio_int.h/.c` | GPIO 中断状态读写（`HAL_GPIO_GetEnabledInterruptStatus`、`HAL_GPIO_ClearInterruptStatus`） |
 | `hal_iic.h/.c` | I2C 控制器读写（`HAL_IIC_Init`、`HAL_IIC_WriteReg`、`HAL_IIC_ReadReg` 等） |
+| `hal_timer.h/.c` | TimerG 定时器/PWM 封装（`HAL_TimerG_StartCounter`、`HAL_TimerG_StopCounter`、`HAL_TimerG_SetLoadValue`、`HAL_TimerG_SetCCValue`、`HAL_TimerG_GetPendingInterrupt`） |
 | `hal_uart.h/.c` | UART 基础收发 |
 
 #### 14.3.2 HAL 接口命名规范
@@ -1495,14 +1556,23 @@ static inline int32_t limit_value(...);
 6. `hal_gpio_int.h/.c` 已从 `hal_gpio.h/.c` 中分离，独立管理 GPIO 中断相关封装。
 7. Board 层 HAL 穿透问题已解决：所有 `DL_GPIO_*` 调用已替换为 `HAL_GPIO_*` 调用。
 8. ICM42688/MPU6050 Device 层 I2C ops 注入模式已实现，消除了 Device→Board 反向 include。
+9. Stepper 步进电机全部重构完成：
+   - Device 层不再包含任何 SysConfig 宏、`DL_GPIO_*` 或 `DL_TimerG_*` 调用；
+   - 硬件配置通过 `stepper_hw_cfg_t` + `stepper_ctrl_timer_cfg_t` 由 Board 层注入；
+   - 设备对象 `stepper_t devices[2]` 移到 Board 层声明，Device 层只保存指针；
+   - `TIMG12_IRQHandler` ISR 移到 Board 层；
+   - 所有 GPIO 操作改为 `HAL_GPIO_*`，所有 Timer 操作改为 `HAL_TimerG_*`。
+10. HAL 层扩展：
+    - 新增 `hal_timer.h/.c`（`HAL_TimerG_StartCounter`、`HAL_TimerG_StopCounter`、`HAL_TimerG_SetLoadValue`、`HAL_TimerG_SetCCValue`、`HAL_TimerG_GetPendingInterrupt`）；
+    - `hal_gpio.h/.c` 新增 `HAL_GPIO_InitOutput`、`HAL_GPIO_InitInput`、`HAL_GPIO_InitPeripheralOutput`、`HAL_GPIO_EnableOutput`。
+11. MT6701 磁编码器驱动完成：Device 层 SSI 协议 + CRC-6 校验，Board 层引脚绑定 + `mt6701_bus_cfg_t` 注入，零 `DL_GPIO_*` 穿透。
 
 ### 待优化
 
 1. 将 Motor 的 PWM Timer/Channel 默认配置进一步迁移到 `motor_board.c`，让 Device 层更纯粹。
-2. 将 Stepper 的 SysConfig 宏、ISR 和双电机状态表进一步拆分到 Board 层。
-3. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
-4. 对无实际实现的 Facade `.c` 文件（如 `icm42688_facade.c`），考虑清理或补充逻辑。
-5. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
+2. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
+3. 对无实际实现的 Facade `.c` 文件（如 `icm42688_facade.c`），考虑清理或补充逻辑。
+4. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
 
 ---
 
