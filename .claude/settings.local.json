@@ -6,7 +6,27 @@
       "Bash(sed -i 's|#include \"../4_board/motor_board.h\"|#include \"motor_board.h\"|g' 4_board/motor_int.h)",
       "Bash(sed -i 's|#include \"../4_board/oled_board.h\"|#include \"oled_board.h\"|g' 4_board/OLED_int.h)",
       "Bash(sed -i 's|#include \"../4_board/xunji_board.h\"|#include \"xunji_board.h\"|g' 4_board/xunji_int.h)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "WebSearch",
+      "Bash(mkdir -p 0_hal)",
+      "Bash(rmdir 1_platform)",
+      "Bash(git rm *)",
+      "Bash(rmdir 0_bsp)",
+      "Bash(sed -i 's|..\\\\\\\\7_apps\\\\\\\\|..\\\\\\\\6_apps\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|..\\\\\\\\6_libs\\\\\\\\|..\\\\\\\\5_libs\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|..\\\\\\\\5_facade\\\\\\\\|..\\\\\\\\4_facade\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|..\\\\\\\\4_board\\\\\\\\|..\\\\\\\\3_board\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|..\\\\\\\\3_device\\\\\\\\|..\\\\\\\\2_device\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|\\\\.\\\\.\\\\\\\\7_apps\\\\\\\\|..\\\\\\\\6_apps\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|\\\\.\\\\.\\\\\\\\6_libs\\\\\\\\|..\\\\\\\\5_libs\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|\\\\.\\\\.\\\\\\\\5_facade\\\\\\\\|..\\\\\\\\4_facade\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|\\\\.\\\\.\\\\\\\\4_board\\\\\\\\|..\\\\\\\\3_board\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(sed -i 's|\\\\.\\\\.\\\\\\\\3_device\\\\\\\\|..\\\\\\\\2_device\\\\\\\\|g' MSPG3507_FreeRTOS.uvprojx)",
+      "Bash(python3 _update_paths.py)",
+      "Bash(ls /msp_freertos_module)",
+      "Read(//e/EmbeddedDevelopment/WorkSpace/**)",
+      "Bash(python3 *)",
+      "Bash(xxd \"E:\\\\EmbeddedDevelopment\\\\WorkSpace\\\\MSPM0G3507\\\\g3507_template\\\\keil\\\\MSPG3507_FreeRTOS.uvprojx\")"
     ]
   }
 }

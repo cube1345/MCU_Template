@@ -1,6 +1,0 @@
-#ifndef MYUSED_MYDRIVERS_OLED_DRIVER_COMPAT_H
-#define MYUSED_MYDRIVERS_OLED_DRIVER_COMPAT_H
-
-#include "../5_facade/oled_facade.h"
-
-#endif /* MYUSED_MYDRIVERS_OLED_DRIVER_COMPAT_H */

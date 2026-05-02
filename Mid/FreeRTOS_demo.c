@@ -1,4 +1,5 @@
 #include "FreeRTOS_demo.h"
+#include "icm42688_board.h"
 #include "icm42688_driver.h"
 #include "my_system_lib.h"
 #include "yuntai_app.h"
@@ -872,7 +873,7 @@ static void Debug_PrintVofaAngleTable(void)
      * 4: last accessed register address (decimal)
      * 5: WHO_AM_I value (decimal, e.g. 71 means 0x47)
      */
-    angleChannels[3] = (float)icm42688_int_get_device_addr();
+    angleChannels[3] = (float)ICM42688_Board_GetDeviceAddr();
     angleChannels[4] = (float)g_icm_debug_last_reg;
     angleChannels[5] = (float)g_icm_debug_last_who_am_i;
 

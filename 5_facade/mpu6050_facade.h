@@ -1,6 +1,0 @@
-#ifndef MYUSED_MYFACADES_MPU6050_FACADE_H
-#define MYUSED_MYFACADES_MPU6050_FACADE_H
-
-#include "../3_device/mpu6050_driver.h"
-
-#endif /* MYUSED_MYFACADES_MPU6050_FACADE_H */

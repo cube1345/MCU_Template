@@ -4,10 +4,11 @@
 
 本文档用于系统说明当前项目外设驱动的分层架构设计，包括：
 
-- 五层架构分别承担什么职责；
+- 多层架构分别承担什么职责；
 - 为什么要将外设拆分为多层；
 - 各类外设在当前架构中的功能划分；
-- `Core`、`Platform/BSP`、`Device`、`Board`、`Facade/Compat` 等层的意义；
+- `HAL`、`Core`、`Device`、`Board`、`Facade` 各层的意义；
+- BSP 与 HAL 的区别：HAL 在底层（`0_hal`），BSP 由 Device + Board 共同构成；
 - 后续新增外设时应遵守的设计原则。
 
 当前工程已经将 LED、Key、Encoder、Buzzer、OLED、ICM42688、MPU6050、Xunji、Motor、Stepper 等模块逐步整理为类似的分层结构。
@@ -16,13 +17,13 @@
 
 ## 2. 总体架构概览
 
-当前外设驱动采用五层思想组织：
+当前外设驱动采用多层思想组织：
 
 ```text
 Application / App / Libs
         |
         v
-Facade / Compat 层
+Facade 层
         |
         v
 Board 层
@@ -31,7 +32,7 @@ Board 层
 Device 层
         |
         v
-Core + Platform/BSP 层
+Core + HAL 层
         |
         v
 MCU 外设寄存器 / SysConfig / DriverLib
@@ -41,18 +42,17 @@ MCU 外设寄存器 / SysConfig / DriverLib
 
 | 层级 | 目录 | 职责 |
 | --- | --- | --- |
-| Core 层 | `2_core` | 通用设备基类、通用操作接口定义 |
-| Platform/BSP 层 | `1_platform`、`0_bsp` | GPIO/I2C/SPI 等平台适配与底层硬件访问 |
-| Device 层 | `3_device` | 外设对象、配置结构体、默认行为、ops 分发 |
-| Board 层 | `4_board` | 绑定具体板级资源、SysConfig 宏、具体实例 |
-| Facade 层 | `5_facade` | 面向业务层的兼容 API、简化接口 |
-| Compat 层 | `5_compat`、部分 `4_board` | 保持旧 include 路径和旧 API 兼容 |
+| HAL 层 | `0_hal` | GPIO/I2C/SPI 等外设寄存器驱动，屏蔽 MCU 厂商差异 |
+| Core 层 | `1_core` | 通用设备基类、通用操作接口定义 |
+| Device 层 | `2_device` | 外设对象、配置结构体、默认行为、ops 分发 |
+| Board 层 | `3_board` | 绑定具体板级资源、SysConfig 宏、中断、具体实例 |
+| Facade 层 | `4_facade` | 面向业务层的简化 API 接口 |
 
-> 注：严格来说 `Compat` 可以看作 Facade 的一部分，也可以看作迁移期的第六类辅助层。本文为了说明迁移过程，会单独介绍。
+> **BSP 的位置**：BSP（板级支持包）不是一个单独目录，而是由 `2_device` + `3_board` 共同构成。Device 层定义器件"是什么、能做什么"，Board 层绑定"接在哪个引脚、用哪个总线"。`0_hal` 是 HAL（硬件抽象层），位于 BSP 之下，不属于 BSP。
 
 ---
 
-## 3. 为什么需要五层架构
+## 3. 为什么需要多层架构
 
 ### 3.1 避免驱动文件职责混乱
 
@@ -73,7 +73,7 @@ MCU 外设寄存器 / SysConfig / DriverLib
 4. 业务层直接依赖底层实现；
 5. 很难复用同一类设备的通用逻辑。
 
-五层架构的核心目标就是将这些职责拆开。
+多层架构的核心目标就是将这些职责拆开。
 
 ### 3.2 提高复用能力
 
@@ -87,7 +87,7 @@ Device 层不应该关心：
 
 - 当前 LED 接在哪个 GPIO；
 - 当前 PWM 使用哪个 Timer；
-- 当前 I2C 使用哪个 BSP 端口；
+- 当前 I2C 使用哪个 HAL 端口（`BSP_IIC_PORT_x`）；
 - 当前中断号是什么。
 
 这些都属于 Board 层职责。
@@ -108,7 +108,7 @@ Device 层不应该关心：
 - `Stepper_Start()`；
 - `bsp_Icm42688Init()`。
 
-如果直接删除旧接口，会造成业务层大面积修改。因此引入 Facade/Compat 层，让旧代码继续可用，同时内部逐步转向新架构。
+如果直接删除旧接口，会造成业务层大面积修改。因此引入 Facade 层，让旧代码继续可用，同时内部逐步转向新架构。
 
 ---
 
@@ -118,8 +118,8 @@ Device 层不应该关心：
 
 核心文件：
 
-- `2_core/device_base.h`
-- `2_core/device_ops.h`
+- `1_core/device_base.h`
+- `1_core/device_ops.h`
 
 ### 4.2 `device_base_t`
 
@@ -169,44 +169,33 @@ Core 层不依赖具体硬件，不依赖 SysConfig，不依赖某个具体外�
 
 ---
 
-## 5. Platform/BSP 层
+## 5. HAL 层
 
 ### 5.1 位置
 
-主要目录：
-
-- `1_platform`
-- `0_bsp`
+目录：`0_hal`
 
 典型文件：
 
-- `platform_gpio.h/.c`
-- `bsp_gpio.h/.c`
-- `bsp_iic.h/.c`
-- `bsp_spi.h/.c`
+- `hal_gpio.h/.c` — GPIO 通用读写封装
+- `hal_gpio_int.h/.c` — GPIO 中断状态读写封装
+- `hal_iic.h/.c` — I2C 控制器驱动
+- `hal_uart.h/.c` — UART 基础收发
 
-### 5.2 BSP 层职责
+### 5.2 HAL 层职责
 
-BSP 层负责直接对接 MCU DriverLib、寄存器或 SysConfig 生成宏。
+HAL（硬件抽象层，Hardware Abstraction Layer）统一承担：
 
-例如：
+- 直接对接 MCU DriverLib、寄存器或 SysConfig 生成宏（GPIO 读写、I2C 收发）；
+- 对上层 Device/Board 提供统一接口，屏蔽厂商相关细节（如 `HAL_GPIO_WritePin(GPIO_Regs*, pin, value)` 包装 `DL_GPIO_setPins/clearPins`）。
 
-- GPIO 读写；
-- I2C 读写寄存器；
-- SPI 传输；
-- Timer/PWM 控制。
+> **HAL ≠ BSP**：HAL 位于最底层，只做外设寄存器的抽象封装。BSP（板级支持包）由 `2_device` + `3_board` 共同构成，在 HAL 之上处理具体的器件驱动和板级资源绑定。这种分层遵循行业惯例：HAL 屏蔽 MCU 差异，BSP 管理板级外设。
 
-### 5.3 Platform 层职责
+### 5.3 HAL 层意义
 
-Platform 层比 BSP 更接近通用设备抽象。
+这一层隔离 MCU 厂商库和设备逻辑。如果将来从 MSPM0G3507 迁移到其他 MCU，理论上优先改 HAL 层，而 Device 层和 Board 层的逻辑可以尽量保持稳定。
 
-例如 `platform_gpio_t` 将 GPIO 端口和引脚包装为结构体，让 Device 层可以通过统一接口读写 GPIO，而不直接依赖 `DL_GPIO_setPins()` 等底层函数。
-
-### 5.4 Platform/BSP 层意义
-
-这一层隔离 MCU 厂商库和设备逻辑。
-
-如果将来从 MSPM0G3507 迁移到其他 MCU，理论上优先改 BSP/Platform，而 Device 层逻辑可以尽量保持稳定。
+`0_hal` 是项目中唯一的 HAL 实现层。所有 `DL_GPIO_*` / `DL_I2C_*` 等厂商库调用都应封装在此，禁止 Board 层或 Device 层直接调用 DriverLib 寄存器操作函数。
 
 ---
 
@@ -216,7 +205,7 @@ Platform 层比 BSP 更接近通用设备抽象。
 
 目录：
 
-- `3_device`
+- `2_device`
 
 ### 6.2 Device 层职责
 
@@ -269,7 +258,7 @@ Device 层原则上不应该强依赖：
 
 目录：
 
-- `4_board`
+- `3_board`
 
 ### 7.2 Board 层职责
 
@@ -306,7 +295,7 @@ Board 层是“硬件差异集中区”。
 
 目录：
 
-- `5_facade`
+- `4_facade`
 
 ### 8.2 Facade 层职责
 
@@ -337,20 +326,13 @@ Facade 层的价值包括：
 
 ---
 
-## 9. Compat 层
+## 9. Compat 层（已移除）
 
-### 9.1 位置
+> **Compat 层已在架构整理中删除。** 旧的 `5_compat/` 目录下的转发头文件全部移除，Keil 工程中不再包含 Compat 分组。
 
-主要是：
+### 9.1 历史背景
 
-- `5_compat`
-- 部分 `4_board`
-
-### 9.2 Compat 层职责
-
-Compat 层是迁移期保留的兼容壳。
-
-旧代码可能仍然包含：
+Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_driver.h"` 路径可用。旧代码中曾包含：
 
 ```c
 #include "motor_driver.h"
@@ -358,15 +340,13 @@ Compat 层是迁移期保留的兼容壳。
 #include "xunji_driver.h"
 ```
 
-如果直接移动文件，会导致旧 include 失效。
+### 9.2 为何移除
 
-因此旧 `5_compat/*.h` 现在主要转发到 `5_facade/*.h`，旧 `.c` 则保留为空翻译单元，避免重复定义。
+经检查确认，项目中没有任何源代码引用 Compat 层的转发头文件。旧 include 路径（如 `#include "buzzer_driver.h"`）通过 Keil 的 `2_device` include path 直接解析到 Device 层头文件，无需中间转发。
 
-### 9.3 Compat 层意义
+### 9.3 当前兼容策略
 
-Compat 层让架构重构可以渐进完成，而不是一次性修改所有业务代码。
-
-长期来看，推荐新代码逐步直接 include Facade 或 Device/Board 头文件，而不是继续依赖旧 Drivers 路径。
+`4_facade/*.h` 直接提供面向业务层的简化 API 接口，业务代码推荐 include Facade 或 Device/Board 头文件，而非依赖旧的 Drivers 命名路径。
 
 ---
 
@@ -378,8 +358,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/led_driver.h`
-- `3_device/led_driver.c`
+- `2_device/led_driver.h`
+- `2_device/led_driver.c`
 
 职责：
 
@@ -393,8 +373,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/led_board.h`
-- `4_board/led_board.c`
+- `3_board/led_board.h`
+- `3_board/led_board.c`
 
 职责：
 
@@ -406,8 +386,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `5_facade/led_facade.h`
-- `5_facade/led_facade.c`
+- `4_facade/led_facade.h`
+- `4_facade/led_facade.c`
 
 职责：
 
@@ -421,8 +401,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/buzzer_driver.h`
-- `3_device/buzzer_driver.c`
+- `2_device/buzzer_driver.h`
+- `2_device/buzzer_driver.c`
 
 职责：
 
@@ -436,8 +416,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/buzzer_board.h`
-- `4_board/buzzer_board.c`
+- `3_board/buzzer_board.h`
+- `3_board/buzzer_board.c`
 
 职责：
 
@@ -448,8 +428,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `5_facade/buzzer_facade.h`
-- `5_facade/buzzer_facade.c`
+- `4_facade/buzzer_facade.h`
+- `4_facade/buzzer_facade.c`
 
 职责：
 
@@ -463,8 +443,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/key_driver.h`
-- `3_device/key_driver.c`
+- `2_device/key_driver.h`
+- `2_device/key_driver.c`
 
 职责：
 
@@ -479,8 +459,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/key_board.h`
-- `4_board/key_board.c`
+- `3_board/key_board.h`
+- `3_board/key_board.c`
 
 职责：
 
@@ -492,8 +472,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `5_facade/key_facade.h`
-- `5_facade/key_facade.c`
+- `4_facade/key_facade.h`
+- `4_facade/key_facade.c`
 
 职责：
 
@@ -507,8 +487,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/encoder_driver.h`
-- `3_device/encoder_driver.c`
+- `2_device/encoder_driver.h`
+- `2_device/encoder_driver.c`
 
 职责：
 
@@ -522,8 +502,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/encoder_board.h`
-- `4_board/encoder_board.c`
+- `3_board/encoder_board.h`
+- `3_board/encoder_board.c`
 
 职责：
 
@@ -536,8 +516,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `5_facade/encoder_facade.h`
-- `5_facade/encoder_facade.c`
+- `4_facade/encoder_facade.h`
+- `4_facade/encoder_facade.c`
 
 职责：
 
@@ -552,8 +532,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/OLED_driver.h`
-- `3_device/OLED_driver.c`
+- `2_device/OLED_driver.h`
+- `2_device/OLED_driver.c`
 
 职责：
 
@@ -567,20 +547,23 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/oled_board.h`
-- `4_board/oled_board.c`
+- `3_board/oled_board.h`
+- `3_board/oled_board.c`
 
 职责：
 
-- 提供 OLED 板级初始化入口；
-- 后续可进一步迁移 `OLED_int.c` 中的 SCL/SDA GPIO 写函数。
+- 提供 OLED 软件 I2C 的 SCL/SDA GPIO 写函数（`OLED_SCL_Write`、`OLED_SDA_Write`）；
+- 通过 `oled_cfg_t` 注入 SCL/SDA 回调到 Device 层；
+- 提供 `OLED_Board_Init()` 板级初始化入口，实例化 `g_default_oled`。
 
-### Facade/Compat 层
+> **设计要点**：OLED 使用软件 I2C 而非硬件 I2C 外设，因此 SCL/SDA 线控通过函数指针注入。这与 ICM42688/MPU6050 的硬件 I2C ops 注入属于同一模式的不同变体。
+
+### Facade 层
 
 文件：
 
-- `5_facade/oled_facade.h`
-- `5_compat/OLED_driver.h`
+- `4_facade/oled_facade.h`
+- `4_facade/OLED_driver.h`
 
 职责：
 
@@ -594,8 +577,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/icm42688_driver.h`
-- `3_device/icm42688_driver.c`
+- `2_device/icm42688_driver.h`
+- `2_device/icm42688_driver.c`
 
 职责：
 
@@ -610,24 +593,28 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/icm42688_board.h`
-- `4_board/icm42688_board.c`
+- `3_board/icm42688_board.h`
+- `3_board/icm42688_board.c`
 
 职责：
 
-- 提供板级初始化入口；
-- 后续可进一步将 I2C 端口、器件地址等从 `icm42688_int` 迁入 Board 层。
+- 实现 `icm42688_i2c_ops_t` 中的全部 7 个函数指针（`write_reg`、`read_reg`、`write_regs`、`read_regs`、`init`、`check_device`、`get_device_addr`）；
+- 通过 `icm42688_cfg_t.i2c` 将 I2C 传输函数注入 Device 层，消除 Device→Board 反向依赖；
+- 实例化 `g_icm42688` 设备对象并绑定默认配置（2000dps 陀螺仪、16G 加速度计）；
+- 提供 `ICM42688_Board_Init()` 和 `ICM42688_Board_GetDevice()`。
 
-### Facade/Compat 层
+> **设计要点**：原先 `icm42688_int.h/.c` 已删除，I2C 传输实现合并到 Board 层。Device 层通过 `cfg.i2c` 函数指针调用 I2C 传输，不再反向 include Board 层头文件。
+
+### Facade 层
 
 文件：
 
-- `5_facade/icm42688_facade.h`
-- `5_compat/icm42688_driver.h`
+- `4_facade/icm42688_facade.h`
 
 职责：
 
-- 保留 `icm42688_init()`、`bsp_Icm42688Init()`、`bsp_IcmGetAccelerometer()` 等旧接口。
+- 保留 `icm42688_init()`、`bsp_Icm42688Init()`、`bsp_IcmGetAccelerometer()` 等旧接口；
+- 内部通过 `ICM42688_Board_GetDevice()` 获取设备实例并调用 ops。
 
 ---
 
@@ -637,8 +624,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/mpu6050_driver.h`
-- `3_device/mpu6050_driver.c`
+- `2_device/mpu6050_driver.h`
+- `2_device/mpu6050_driver.c`
 
 职责：
 
@@ -650,26 +637,27 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 - 封装 `MPU6050_ReadScaledDevice()`；
 - 提供 `mpu6050_read_raw_data()`、`mpu6050_convert_raw_data()`。
 
-### Board/Int 层
+### Board 层
 
 文件：
 
-- `4_board/mpu6050_int.h`
-- `4_board/mpu6050_int.c`
-- `4_board/mpu6050_board.h`
-- `4_board/mpu6050_board.c`
+- `3_board/mpu6050_board.h`
+- `3_board/mpu6050_board.c`
 
 职责：
 
-- 绑定 I2C 总线端口（`BSP_IIC_PORT_0`）和器件地址（`0x68`）；
-- 通过 `mpu6050_int_*` 函数封装 `bsp_iic_*` 调用；
-- 提供 `MPU6050_Board_Init()` 板级初始化入口。
+- 实现 `mpu6050_i2c_ops_t` 中的全部 7 个函数指针，绑定 I2C 总线端口和器件地址（`0x68`）；
+- 通过 `mpu6050_cfg_t.i2c` 将 I2C 传输函数注入 Device 层；
+- 实例化 `g_mpu6050` 设备对象；
+- 提供 `MPU6050_Board_Init()` 和 `MPU6050_Board_GetDevice()`。
+
+> **设计要点**：与 ICM42688 完全相同的 I2C ops 注入模式。原先 `mpu6050_int.h/.c` 已删除。
 
 ### Facade 层
 
 文件：
 
-- `5_facade/mpu6050_facade.h`
+- `4_facade/mpu6050_facade.h`
 
 职责：
 
@@ -683,8 +671,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/xunji_driver.h`
-- `3_device/xunji_driver.c`
+- `2_device/xunji_driver.h`
+- `2_device/xunji_driver.c`
 
 职责：
 
@@ -694,19 +682,18 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 - 封装多路输入读取；
 - 保留 `Xunji_Driver_Bind()`、`Xunji_Get()`、`Xunji_Init()`。
 
-### Board/Int 层
+### Board 层
 
 文件：
 
-- `4_board/xunji_board.h`
-- `4_board/xunji_board.c`
-- `4_board/xunji_int.h`
-- `4_board/xunji_int.c`
+- `3_board/xunji_board.h`
+- `3_board/xunji_board.c`
 
 职责：
 
 - 绑定五路循迹传感器 GPIO；
-- 将每一路 GPIO 读函数注册给 Device 层。
+- 将每一路 GPIO 读函数通过 `HAL_GPIO_ReadPin()` 注册给 Device 层；
+- 实例化 `g_default_xunji` 设备对象。
 
 ---
 
@@ -716,8 +703,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/motor_driver.h`
-- `3_device/motor_driver.c`
+- `2_device/motor_driver.h`
+- `2_device/motor_driver.c`
 
 职责：
 
@@ -734,8 +721,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/motor_board.h`
-- `4_board/motor_board.c`
+- `3_board/motor_board.h`
+- `3_board/motor_board.c`
 
 职责：
 
@@ -750,8 +737,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `3_device/stepper_driver.h`
-- `3_device/stepper_driver.c`
+- `2_device/stepper_driver.h`
+- `2_device/stepper_driver.c`
 
 职责：
 
@@ -766,8 +753,8 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
 
 文件：
 
-- `4_board/stepper_board.h`
-- `4_board/stepper_board.c`
+- `3_board/stepper_board.h`
+- `3_board/stepper_board.c`
 
 职责：
 
@@ -787,7 +774,7 @@ Compat 层让架构重构可以渐进完成，而不是一次性修改所有业�
             -> Device: LED_On(led_t *)
                 -> ops->on()
                     -> Platform_GPIO_Write()
-                        -> BSP / DriverLib
+                        -> HAL / DriverLib
 ```
 
 ### 11.2 Encoder 调用链
@@ -830,7 +817,7 @@ GPIO 中断 GROUP1_IRQHandler
 
 2. 在 `device_ops.h` 中复用或新增合适的 ops。
 
-3. 在 `3_device` 中创建：
+3. 在 `2_device` 中创建：
 
 ```text
 xxx_driver.h
@@ -854,7 +841,7 @@ struct xxx_s {
 };
 ```
 
-5. 在 `4_board` 中创建：
+5. 在 `3_board` 中创建：
 
 ```text
 xxx_board.h
@@ -863,7 +850,7 @@ xxx_board.c
 
 用于绑定当前板子的 GPIO、Timer、I2C、SPI、中断等。
 
-6. 在 `5_facade` 中创建：
+6. 在 `4_facade` 中创建：
 
 ```text
 xxx_facade.h
@@ -872,7 +859,7 @@ xxx_facade.c
 
 用于对业务层提供稳定 API。
 
-7. 如果旧代码已经使用 `5_compat/xxx_driver.h`，则在 `5_compat` 保留兼容壳。
+7. 如果旧代码已经使用 `4_facade/xxx_driver.h`，则在 `4_facade` 保留兼容壳。
 
 ---
 
@@ -888,7 +875,7 @@ Device 层对象可以复用到多个实例，例如多个 LED、多个 Key、�
 
 ### 13.3 业务接口稳定
 
-Facade 和 Compat 层保留旧 API，减少业务层大面积修改。
+Facade 层保留旧 API，减少业务层大面积修改。
 
 ### 13.4 便于测试
 
@@ -902,15 +889,15 @@ Device 层可以通过 mock cfg、mock 回调进行测试，而不一定依赖�
 
 ## 14. 当前各层设计理念与后续开发要求
 
-本节是后续开发、维护和新增外设时必须优先遵守的规则。项目虽然采用五层架构，但分层不是为了让文件数量变多，而是为了让每一类代码只承担清晰职责。
+本节是后续开发、维护和新增外设时必须优先遵守的规则。分层不是为了让文件数量变多，而是为了让每一类代码只承担清晰职责。
 
 ### 14.1 总体原则
 
-1. **Core 层只定义规则，不定义具体设备行为。**
-2. **Device 层实现外设本体，不绑定具体板级资源。**
-3. **Board 层绑定当前硬件板，不承载复杂算法。**
-4. **Facade 层服务业务代码，不操作寄存器、不写硬件细节。**
-5. **Compat 层只为旧代码过渡存在，不应继续扩展新功能。**
+1. **HAL 层只封装 MCU 外设寄存器操作，不涉及具体器件逻辑。**
+2. **Core 层只定义规则，不定义具体设备行为。**
+3. **Device 层实现外设本体，不绑定具体板级资源。**
+4. **Board 层绑定当前硬件板，不承载复杂算法。**
+5. **Facade 层服务业务代码，不操作寄存器、不写硬件细节。**
 6. **App 层作为模板示例保留，默认不主动调用。**
 
 推荐调用方向：
@@ -920,7 +907,7 @@ App / Libs
     -> Facade
         -> Board
             -> Device
-                -> Platform / BSP
+                -> HAL
                     -> DriverLib / Registers
 ```
 
@@ -930,7 +917,7 @@ App / Libs
 
 ### 14.2 Core 层开发要求
 
-目录：`2_core`
+目录：`1_core`
 
 Core 层目前主要包含：
 
@@ -1012,47 +999,53 @@ Stepper_ConfigSyncReverse();
 
 ---
 
-### 14.3 Platform / BSP 层开发要求
+### 14.3 HAL 层开发要求
 
-目录：
-
-- `1_platform`
-- `0_bsp`
+目录：`0_hal`
 
 设计理念：
 
 ```text
-Platform 提供较薄的跨设备硬件访问包装；BSP 负责直接接触底层外设库和寄存器。
+HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂商库之间的唯一隔离层。
 ```
 
-#### 14.3.1 BSP 层
+#### 14.3.1 HAL 驱动文件（`hal_*.c/h`）
 
-BSP 层可以直接使用：
+可以直接使用：
 
 - TI DriverLib；
 - SysConfig 生成宏；
 - 寄存器结构体；
 - I2C/SPI/UART/Timer 等底层外设。
 
-但 BSP 层不应该知道业务含义。例如 BSP 可以知道“写某个 GPIO”，但不应该知道“这是蓝灯”或“这是蜂鸣器”。
+但不应该知道业务含义。例如可以知道”写某个 GPIO”，但不应该知道”这是蓝灯”或”这是蜂鸣器”。
 
-#### 14.3.2 Platform 层
+当前 HAL 层文件：
 
-Platform 层应提供轻量统一接口，例如：
+| 文件 | 职责 |
+| --- | --- |
+| `hal_gpio.h/.c` | GPIO 读写、翻转（`HAL_GPIO_WritePin`、`HAL_GPIO_ReadPin`、`HAL_GPIO_TogglePin`） |
+| `hal_gpio_int.h/.c` | GPIO 中断状态读写（`HAL_GPIO_GetEnabledInterruptStatus`、`HAL_GPIO_ClearInterruptStatus`） |
+| `hal_iic.h/.c` | I2C 控制器读写（`HAL_IIC_Init`、`HAL_IIC_WriteReg`、`HAL_IIC_ReadReg` 等） |
+| `hal_uart.h/.c` | UART 基础收发 |
+
+#### 14.3.2 HAL 接口命名规范
+
+所有 HAL 层公共函数和类型使用 `HAL_` 前缀：
 
 ```c
-Platform_GPIO_Write();
-Platform_GPIO_Read();
-Platform_GPIO_Toggle();
+void HAL_GPIO_WritePin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin, uint8_t Value);
+uint8_t HAL_GPIO_ReadPin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin);
+void HAL_GPIO_TogglePin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin);
 ```
 
-Device 层优先调用 Platform 层，而不是直接调用 DriverLib。
+Device 层和 Board 层优先调用 HAL 接口，而不是直接调用 DriverLib。这保证了 MCU 迁移时只需修改 HAL 层。
 
 ---
 
 ### 14.4 Device 层开发要求
 
-目录：`3_device`
+目录：`2_device`
 
 设计理念：
 
@@ -1154,7 +1147,7 @@ Device 层不应直接承担：
 
 ### 14.5 Board 层开发要求
 
-目录：`4_board`
+目录：`3_board`
 
 设计理念：
 
@@ -1206,7 +1199,7 @@ Board 层只做绑定，不做业务算法。
 
 ### 14.6 Facade 层开发要求
 
-目录：`5_facade`
+目录：`4_facade`
 
 设计理念：
 
@@ -1246,8 +1239,8 @@ Key_GetValue();
 例如 OLED 和 ICM42688 当前就是这种情况：
 
 ```c
-#include "../3_device/OLED_driver.h"
-#include "../3_device/icm42688_driver.h"
+#include "../2_device/OLED_driver.h"
+#include "../2_device/icm42688_driver.h"
 ```
 
 这不是错误，表示暂时没有必要额外包一层函数。
@@ -1275,58 +1268,31 @@ DL_GPIO_setPins();
 DL_Timer_setCaptureCompareValue();
 ```
 
-这些应属于 Board / Device / Platform / BSP。
+这些应属于 Board / Device / HAL。
 
 ---
 
-### 14.7 Compat 层开发要求
+### 14.7 Compat 层（已移除）
 
-目录：`5_compat`，以及部分历史 `4_board`
+> Compat 层（原 `5_compat/`）已在架构整理中删除。9 个转发头文件全部移除，Keil 工程中不再包含 Compat 分组。
 
-设计理念：
+旧代码中 `#include "motor_driver.h"` 等路径现在通过 Keil 的 `2_device` include path 直接解析到 Device 层头文件，无需中间转发。新增代码应优先 include `4_facade/*.h` 或 `2_device/*.h`。
 
-```text
-Compat 层只为历史路径和旧 API 过渡存在，不是新功能开发位置。
-```
+#### 14.7.3 `_int` 文件消除
 
-#### 14.7.1 `5_compat/*.h`
+原先 `3_board/` 中的 `*_int.h/.c` 文件（`icm42688_int`、`mpu6050_int`、`OLED_int`、`xunji_int`、`key_int`、`buzzer_int`、`led_int`、`motor_int`、`stepper_int` 等）已全部删除。其逻辑已合并到对应的 `*_board.c` 中：
 
-推荐作为兼容头文件保留，例如：
+- **ICM42688/MPU6050**：I2C 传输实现合并到 `icm42688_board.c` / `mpu6050_board.c`，通过 `i2c_ops_t` 函数指针注入 Device 层；
+- **OLED**：SCL/SDA GPIO 写函数合并到 `oled_board.c`，通过 `oled_cfg_t` 回调注入 Device 层；
+- **Xunji/Encoder/Key**：GPIO 读取和中断处理直接在 `*_board.c` 中实现。
 
-```c
-#ifndef MYUSED_MYDRIVERS_MOTOR_DRIVER_COMPAT_H
-#define MYUSED_MYDRIVERS_MOTOR_DRIVER_COMPAT_H
-
-#include "../5_facade/motor_facade.h"
-
-#endif
-```
-
-这样旧代码仍然可以：
-
-```c
-#include "motor_driver.h"
-```
-
-但实际转到 Facade / Device。
-
-#### 14.7.2 `5_compat/*.c`
-
-旧兼容 `.c` 如果只包含一个头文件，没有实际实现，建议从工程中移除并删除。
-
-删除前必须同步修改 Keil 工程，否则 Keil 会报文件不存在。
-
-#### 14.7.3 旧 `MyInts` → `4_board` 迁移
-
-旧 `MyInts` 目录中的板级绑定逻辑（ICM42688 I2C 地址与端口、OLED 软件 I2C 线控、Xunji GPIO 读取等）已完成迁移，对应文件现在位于 `4_board/` 目录下（如 `4_board/icm42688_int.h/.c`、`4_board/OLED_int.h/.c`、`4_board/xunji_int.h/.c`）。
-
-新增外设的 int 绑定文件也应直接放在 `4_board/` 中（如 `mpu6050_int.h/.c`），不再需要单独的 `MyInts` 目录。
+新增外设不再创建单独的 `_int` 文件，板级绑定逻辑统一放在 `*_board.c` 中。
 
 ---
 
 ### 14.8 App 层开发要求
 
-目录：`7_apps`
+目录：`6_apps`
 
 设计理念：
 
@@ -1361,13 +1327,12 @@ App 层代码应该：
 后续新代码推荐 include 优先级：
 
 ```text
-App / Libs -> 优先 include 5_facade/*.h
-Board      -> include 3_device/*.h
-Device     -> include 2_core/*.h、1_platform/*.h、必要 BSP/ti_msp_dl_config.h
-Compat     -> include 5_facade/*.h
+App / Libs -> 优先 include 4_facade/*.h
+Board      -> include 2_device/*.h
+Device     -> include 1_core/*.h、0_hal/*.h、必要 ti_msp_dl_config.h
+Core       -> 不依赖 Device/Board/Facade
+HAL        -> 只依赖 DriverLib / ti_msp_dl_config.h
 ```
-
-不推荐新代码继续直接依赖旧 `5_compat` 路径。
 
 头文件应尽量最小化 include：
 
@@ -1466,26 +1431,18 @@ static inline int32_t limit_value(...);
 
 #### 低风险清理
 
-可以优先删除或移出编译：
-
-```text
-5_compat/*.c
-```
-
-这些通常只是兼容空壳。
-
-但删除前必须同步修改 Keil 工程文件。
+已删除的 Compat 层转发头文件（原 `5_compat/*.h`）属于最低风险清理，已全部移除。Keil 工程中对应分组也已删除。
 
 #### 中风险清理
 
 可以考虑删除空的 Facade `.c`：
 
 ```text
-5_facade/icm42688_facade.c
-5_facade/oled_facade.c
-5_facade/motor_facade.c
-5_facade/stepper_facade.c
-5_facade/xunji_facade.c
+4_facade/icm42688_facade.c
+4_facade/oled_facade.c
+4_facade/motor_facade.c
+4_facade/stepper_facade.c
+4_facade/xunji_facade.c
 ```
 
 如果未来要补 Facade 逻辑，也可以保留。
@@ -1495,16 +1452,16 @@ static inline int32_t limit_value(...);
 暂不建议直接删除：
 
 ```text
-4_board/*
-7_apps/*
-5_compat/*.h
+3_board/*
+6_apps/*
+4_facade/*.h
 ```
 
 原因：
 
-- `4_board/*` 中仍有真实板级绑定逻辑（int 文件、ISR 等）；
-- `7_apps/*` 是模板示例；
-- `5_compat/*.h` 仍承担旧 include 兼容。
+- `3_board/*` 中仍有真实板级绑定逻辑（int 文件、ISR 等）；
+- `6_apps/*` 是模板示例；
+- `4_facade/*.h` 为业务层提供 Facade 入口。
 
 ---
 
@@ -1513,12 +1470,11 @@ static inline int32_t limit_value(...);
 新增外设必须按以下流程：
 
 1. 判断外设类别，确认是否已有合适 ops；
-2. 在 `3_device` 中创建对象和 cfg；
+2. 在 `2_device` 中创建对象和 cfg；
 3. 将实例参数放入 cfg 或对象结构体；
-4. 将板级资源绑定放入 `4_board`；
-5. 将业务简化接口放入 `5_facade`；
-6. 如需兼容旧路径，在 `5_compat` 添加转发头文件；
-7. 不新增可写全局变量；
+4. 将板级资源绑定放入 `3_board`；
+5. 将业务简化接口放入 `4_facade`；
+6. 不新增可写全局变量；
 8. 内部函数全部 `static`；
 9. 默认配置和 ops 表使用 `static const`；
 10. 完成后做语法检查。
@@ -1527,30 +1483,39 @@ static inline int32_t limit_value(...);
 
 ## 15. 后续优化建议
 
-当前架构已经完成第一轮迁移，但仍有一些可以继续优化的方向：
+当前架构已经完成第二轮大规模重构，以下为已完成和剩余事项：
 
-1. 将 OLED 的 SCL/SDA GPIO 写函数从 `OLED_int.c` 进一步迁移到 `oled_board.c`。
-2. 将 ICM42688 的 I2C 端口和器件地址从 `icm42688_int.h` 进一步迁移到 `icm42688_board.h/.c`。
-3. 将 Motor 的 PWM Timer/Channel 默认配置进一步迁移到 `motor_board.c`，让 Device 层更纯粹。
-4. 将 Stepper 的 SysConfig 宏、ISR 和双电机状态表进一步拆分到 Board 层。
-5. 新业务代码优先 include `5_facade/*.h` 或 `4_board/*.h`，减少对旧 `5_compat` 兼容路径的依赖。
-6. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
-7. 为每个 Device 层补齐统一风格的 Doxygen 注释。
-8. 在确认 Keil 工程引用更新后，删除空壳 `5_compat/*.c`。
-9. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
+### 已完成
+
+1. OLED 的 SCL/SDA GPIO 写函数已从 `OLED_int.c` 迁移到 `oled_board.c`，通过回调注入。
+2. ICM42688 和 MPU6050 的 I2C 端口和器件地址已从 `_int.h` 迁移到 `*_board.c`，通过 `i2c_ops_t` 函数指针注入。
+3. 所有 `*_int.h/.c` 文件已删除，逻辑合并到对应 `*_board.c`。
+4. `5_compat/` 目录已删除，9 个转发头文件已移除。
+5. `0_hal/` 层文件已全部重命名为 `hal_*.h/.c`（原 `bsp_*.h/.c` → `hal_*.h/.c`），公共 API 使用 `HAL_` 前缀。
+6. `hal_gpio_int.h/.c` 已从 `hal_gpio.h/.c` 中分离，独立管理 GPIO 中断相关封装。
+7. Board 层 HAL 穿透问题已解决：所有 `DL_GPIO_*` 调用已替换为 `HAL_GPIO_*` 调用。
+8. ICM42688/MPU6050 Device 层 I2C ops 注入模式已实现，消除了 Device→Board 反向 include。
+
+### 待优化
+
+1. 将 Motor 的 PWM Timer/Channel 默认配置进一步迁移到 `motor_board.c`，让 Device 层更纯粹。
+2. 将 Stepper 的 SysConfig 宏、ISR 和双电机状态表进一步拆分到 Board 层。
+3. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
+4. 对无实际实现的 Facade `.c` 文件（如 `icm42688_facade.c`），考虑清理或补充逻辑。
+5. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
 
 ---
 
 ## 16. 总结
 
-当前五层架构的核心思想是：
+当前多层架构的核心思想是：
 
 ```text
+HAL 层屏蔽 MCU 底层差异（最底层，不属于 BSP）；
 Core 定义通用规则；
-Platform/BSP 屏蔽 MCU 底层差异；
-Device 实现外设类本体；
-Board 绑定当前硬件实例；
-Facade/Compat 稳定业务接口并兼容旧代码。
+Device 实现外设类本体；    ──┐
+Board 绑定当前硬件实例；  ──┼── 两者共同构成 BSP
+Facade 稳定业务接口。
 ```
 
 这种结构适合嵌入式工程长期演进，尤其适合当前这种外设数量逐渐增加、业务层逐渐复杂、同时又需要兼容历史代码的项目。

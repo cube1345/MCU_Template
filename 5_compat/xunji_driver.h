@@ -1,6 +1,0 @@
-#ifndef MYUSED_MYDRIVERS_XUNJI_DRIVER_COMPAT_H
-#define MYUSED_MYDRIVERS_XUNJI_DRIVER_COMPAT_H
-
-#include "../5_facade/xunji_facade.h"
-
-#endif /* MYUSED_MYDRIVERS_XUNJI_DRIVER_COMPAT_H */

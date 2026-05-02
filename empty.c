@@ -4,6 +4,7 @@
 #include "IMU.h"
 #include "FreeRTOS_demo.h"
 #include "yuntai_app.h"
+#include "4_facade/uart_facade.h"
 
 #define YUNTAI_STARTUP_USE_DIRECTION_CAL 0U
 
@@ -65,10 +66,10 @@ int main(void)
  */
 void UART_2_INST_IRQHandler(void)
 {
-	switch (DL_UART_Main_getPendingInterrupt(UART_2_INST)) {
+	switch (Platform_UART_GetPendingInterrupt(&g_uart2_debug)) {
 		case DL_UART_MAIN_IIDX_RX:
 		{
-			uint8_t res = DL_UART_Main_receiveData(UART_2_INST);
+			uint8_t res = Platform_UART_ReceiveData(&g_uart2_debug);
 			printf("Received: 0x%02X\r\n", res);
 			break;
 		}
