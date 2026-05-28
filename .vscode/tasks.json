@@ -1,0 +1,25 @@
+
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "OpenOCD: flash Debug",
+            "type": "shell",
+            "command": "E:/EmbeddedDevelopment/SoftWare/Tools/openocd-20260302/OpenOCD-20260302-0.12.0/bin/openocd.exe",
+            "args": [
+                "-s",
+                "E:/EmbeddedDevelopment/SoftWare/Tools/openocd-20260302/OpenOCD-20260302-0.12.0/share/openocd/scripts",
+                "-f",
+                "interface/cmsis-dap.cfg",
+                "-f",
+                "target/stm32f4x.cfg",
+                "-c",
+                "program build/Debug/CMake_Debug.elf verify reset exit"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

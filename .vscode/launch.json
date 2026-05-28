@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "DAPLink OpenOCD Debug",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/CMake_Debug.elf",
+            "gdbPath": "E:/EmbeddedDevelopment/SoftWare/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gdb.exe",
+            "armToolchainPath": "E:/EmbeddedDevelopment/SoftWare/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin",
+            "toolchainPrefix": "arm-none-eabi",
+            "serverpath": "E:/EmbeddedDevelopment/SoftWare/Tools/openocd-20260302/OpenOCD-20260302-0.12.0/bin/openocd.exe",
+            "searchDir": [
+                "E:/EmbeddedDevelopment/SoftWare/Tools/openocd-20260302/OpenOCD-20260302-0.12.0/share/openocd/scripts"
+            ],
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f4x.cfg"
+            ],
+            "interface": "swd",
+            "device": "STM32F407VGTx",
+            "openOCDLaunchCommands": [
+                "transport select swd",
+                "adapter speed 4000"
+            ],
+            "runToEntryPoint": "main",
+            "postLaunchCommands": [
+                "break Core/Src/main.c:133",
+                "break Core/Src/main.c:147",
+                "break Error_Handler",
+                "display SystemCoreClock",
+                "display uwTick"
+            ],
+            "showDevDebugOutput": "raw"
+        },
+        {
+            "name": "连接 MCP GDB",
+            "type": "mcu-gdb-mcp",
+            "request": "attach"
+        }
+    ]
+}
