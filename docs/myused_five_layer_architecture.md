@@ -35,7 +35,7 @@ Device 层
 Core + HAL 层
         |
         v
-MCU 外设寄存器 / SysConfig / DriverLib
+STM32 HAL / MCU 外设寄存器
 ```
 
 实际目录大致对应如下：
@@ -45,10 +45,12 @@ MCU 外设寄存器 / SysConfig / DriverLib
 | HAL 层 | `0_hal` | GPIO/I2C/SPI 等外设寄存器驱动，屏蔽 MCU 厂商差异 |
 | Core 层 | `1_core` | 通用设备基类、通用操作接口定义 |
 | Device 层 | `2_device` | 外设对象、配置结构体、默认行为、ops 分发 |
-| Board 层 | `3_board` | 绑定具体板级资源、SysConfig 宏、中断、具体实例 |
+| Board 层 | `3_board` | 默认空板级绑定；真实板卡 Profile 中再注入外设句柄、GPIO、地址和中断 |
 | Facade 层 | `4_facade` | 面向业务层的简化 API 接口 |
 
 > **BSP 的位置**：BSP（板级支持包）不是一个单独目录，而是由 `2_device` + `3_board` 共同构成。Device 层定义器件"是什么、能做什么"，Board 层绑定"接在哪个引脚、用哪个总线"。`0_hal` 是 HAL（硬件抽象层），位于 BSP 之下，不属于 BSP。
+>
+> **当前模板分支约定**：`3_board` 默认保持未绑定状态，不实例化具体板卡外设对象，不写死 GPIO 引脚、I2C 地址、UART 句柄或中断入口。真正适配某块板卡时，再通过 board profile、派生分支或明确的板级提交向 `3_board` 注入资源。
 
 ---
 
@@ -92,7 +94,7 @@ Device 层不应该关心：
 
 这些都属于 Board 层职责。
 
-当 PCB 或 SysConfig 变化时，优先修改 Board 层，而不是修改 Device 层算法。
+当 PCB、CubeMX 配置或板级资源变化时，优先修改 Board/Profile 层，而不是修改 Device 层算法。模板默认状态下，Board 层应返回空对象或安全默认值，保证未绑定板卡时项目仍可编译。
 
 ### 3.4 兼容旧业务代码
 
@@ -181,23 +183,23 @@ Core 层不依赖具体硬件，不依赖 SysConfig，不依赖某个具体外�
 - `hal_gpio.h/.c` — GPIO 通用读写、初始化封装
 - `hal_gpio_int.h/.c` — GPIO 中断状态读写封装
 - `hal_iic.h/.c` — I2C 控制器驱动
-- `hal_timer.h/.c` — TimerG 定时器/PWM 封装
+- `hal_timer.h/.c` — TIM 定时器/PWM 封装
 - `hal_uart.h/.c` — UART 基础收发
 
 ### 5.2 HAL 层职责
 
 HAL（硬件抽象层，Hardware Abstraction Layer）统一承担：
 
-- 直接对接 MCU DriverLib、寄存器或 SysConfig 生成宏（GPIO 读写、I2C 收发）；
-- 对上层 Device/Board 提供统一接口，屏蔽厂商相关细节（如 `HAL_GPIO_WritePin(GPIO_Regs*, pin, value)` 包装 `DL_GPIO_setPins/clearPins`）。
+- 直接对接 STM32 HAL、CubeMX 生成句柄或底层寄存器（GPIO 读写、I2C 收发、TIM/PWM 控制）；
+- 对上层 Device/Board 提供统一接口，屏蔽厂商相关细节（如将 GPIO 写入、I2C 传输封装成项目内统一函数）。
 
 > **HAL ≠ BSP**：HAL 位于最底层，只做外设寄存器的抽象封装。BSP（板级支持包）由 `2_device` + `3_board` 共同构成，在 HAL 之上处理具体的器件驱动和板级资源绑定。这种分层遵循行业惯例：HAL 屏蔽 MCU 差异，BSP 管理板级外设。
 
 ### 5.3 HAL 层意义
 
-这一层隔离 MCU 厂商库和设备逻辑。如果将来从 MSPM0G3507 迁移到其他 MCU，理论上优先改 HAL 层，而 Device 层和 Board 层的逻辑可以尽量保持稳定。
+这一层隔离 MCU 厂商库和设备逻辑。当前 STM32F407 模板中，`0_hal` 面向 STM32 HAL/CubeMX；如果将来迁移到其他 MCU，理论上优先改 HAL 层，而 Device 层和 Board 层的逻辑可以尽量保持稳定。
 
-`0_hal` 是项目中唯一的 HAL 实现层。所有 `DL_GPIO_*` / `DL_I2C_*` 等厂商库调用都应封装在此，禁止 Board 层或 Device 层直接调用 DriverLib 寄存器操作函数。
+`0_hal` 是项目中唯一的 HAL 实现层。所有 STM32 HAL/CubeMX 外设依赖都应封装在此，禁止 Board 层或 Device 层直接散落具体厂商 API。若 CubeMX 未开启某个外设模块，`0_hal` 对应封装仍应保留同名 API，并以空操作、错误码或安全默认值表示“能力不可用”。
 
 ---
 
@@ -264,30 +266,28 @@ Device 层原则上不应该强依赖：
 
 ### 7.2 Board 层职责
 
-Board 层负责把 Device 层的通用设备类绑定到当前硬件板。
+Board 层负责把 Device 层的通用设备类绑定到当前硬件板。当前模板默认采用“空 Board”策略：未选择具体板卡时，Board 层不声明真实外设对象，不绑定引脚，不绑定地址，不注册强板级 ISR。
 
 典型职责包括：
 
-- 创建具体对象实例；
-- 填写 GPIO 配置；
-- 填写 Timer/PWM 配置；
-- 绑定 I2C/SPI 端口；
-- 绑定 SysConfig 生成的宏；
-- 配置 NVIC；
-- 放置强板级 ISR。
+- 在具体 board profile 中创建对象实例；
+- 在具体 board profile 中填写 GPIO、TIM/PWM、I2C/SPI/UART 配置；
+- 在具体 board profile 中绑定 CubeMX 句柄、通道、设备地址；
+- 在具体 board profile 中配置 NVIC 或放置强板级 ISR；
+- 在默认模板中返回空对象、0 地址或不可用状态。
 
-例如 Encoder 的板级层负责：
+例如真实板卡上的 Encoder 板级层可以负责：
 
 - 实例化 Encoder A/B；
 - 绑定 A/B 相 GPIO；
-- 在 `GROUP1_IRQHandler` 中读取中断状态和引脚电平；
+- 在对应 EXTI/Timer 中断中读取中断状态和引脚电平；
 - 调用 `Encoder_UpdateFromAB()` 更新计数。
 
 ### 7.3 Board 层意义
 
 Board 层是“硬件差异集中区”。
 
-当硬件引脚变化、PWM 通道变化、I2C 地址变化时，应优先修改 Board 层。
+当硬件引脚变化、PWM 通道变化、I2C 地址变化时，应优先修改 Board/Profile 层。模板默认 Board 不代表任何真实板卡，因此不应把调试板、比赛板或某个 PCB 的具体引脚重新写回默认模板。
 
 ---
 
@@ -380,9 +380,9 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 实例化蓝灯、红灯；
-- 绑定 `LED_BLUE_PORT`、`LED_BLUE_PIN` 等 SysConfig 宏；
-- 提供 `LED_Board_GetBlue()`、`LED_Board_GetRed()`。
+- 默认模板中不实例化蓝灯、红灯；
+- 默认模板中不绑定任何 GPIO 宏；
+- 真实板卡 profile 可提供 `LED_Board_GetBlue()`、`LED_Board_GetRed()` 并返回具体对象。
 
 ### Facade 层
 
@@ -423,8 +423,8 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 实例化蜂鸣器对象；
-- 绑定蜂鸣器 GPIO。
+- 默认模板中不实例化蜂鸣器对象；
+- 真实板卡 profile 中再绑定蜂鸣器 GPIO。
 
 ### Facade 层
 
@@ -601,23 +601,24 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 实现 `icm42688_i2c_ops_t` 中的全部 7 个函数指针（`write_reg`、`read_reg`、`write_regs`、`read_regs`、`init`、`check_device`、`get_device_addr`）；
-- 通过 `icm42688_cfg_t.i2c` 将 I2C 传输函数注入 Device 层，消除 Device→Board 反向依赖；
-- 实例化 `g_icm42688` 设备对象并绑定默认配置（2000dps 陀螺仪、16G 加速度计）；
-- 提供 `ICM42688_Board_Init()` 和 `ICM42688_Board_GetDevice()`。
+- 默认模板中 `ICM42688_Board_Init()` 为空操作，`ICM42688_Board_GetDevice()` 返回空指针；
+- 真实板卡 profile 中实现 `icm42688_i2c_ops_t` 中的全部 7 个函数指针（`write_reg`、`read_reg`、`write_regs`、`read_regs`、`init`、`check_device`、`get_device_addr`）；
+- 真实板卡 profile 中通过 `icm42688_cfg_t.i2c` 将 I2C 传输函数注入 Device 层，消除 Device→Board 反向依赖；
+- 真实板卡 profile 中实例化 `g_icm42688` 设备对象并绑定默认配置。
 
-> **设计要点**：原先 `icm42688_int.h/.c` 已删除，I2C 传输实现合并到 Board 层。Device 层通过 `cfg.i2c` 函数指针调用 I2C 传输，不再反向 include Board 层头文件。
+> **设计要点**：原先 `icm42688_int.h/.c` 已删除。Device 层通过 `cfg.i2c` 函数指针调用 I2C 传输，不再反向 include Board 层头文件；Lib/App 也不直接 include Board，而是通过 Facade 或注入的 ops 访问。
 
 ### Facade 层
 
 文件：
 
 - `4_facade/icm42688_facade.h`
+- `4_facade/icm42688_facade.c`
 
 职责：
 
-- 保留 `icm42688_init()`、`bsp_Icm42688Init()`、`bsp_IcmGetAccelerometer()` 等旧接口；
-- 内部通过 `ICM42688_Board_GetDevice()` 获取设备实例并调用 ops。
+- 隐藏 Board 层访问，向 Lib/App 提供 `ICM42688_Facade_Init()`、`ICM42688_Facade_GetDevice()`、`ICM42688_Facade_ReadRaw()` 等接口；
+- 旧接口若需要兼容，应优先落在 Facade 或 Device 的兼容函数中，避免 Lib/App 直接调用 Board。
 
 ---
 
@@ -752,13 +753,13 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 - 提供 `Stepper_InitDevice()` 绑定 ops 到具体设备对象；
 - 提供全局 API：`Stepper_Enable()`、`Stepper_Start()`、`Stepper_Stop()`、`Stepper_SetFrequency()`、`Stepper_SetEnablePolarity()`、`Stepper_SetForwardLevel()`、`Stepper_ToggleDirection()`、`Stepper_SetPulseWidthUs()`、`Stepper_GetState()` 等，内部通过 `g_stepper_devices[id].ops->xxx()` 路由至 ops；
 - 实现 `Stepper_Service1ms()` 同步反向逻辑；
-- 所有 GPIO 操作通过 `HAL_GPIO_*`，所有 Timer 操作通过 `HAL_TimerG_*`；
-- 零 SysConfig 宏，零 `DL_GPIO_*` / `DL_TimerG_*` 直接调用。
+- 所有 GPIO 操作通过项目 `0_hal` GPIO 封装，所有定时器/PWM 操作通过项目 `0_hal` TIM 封装；
+- 零具体板卡引脚宏，零厂商库调用穿透。
 
 > **设计要点**：
 > - 设备对象 `stepper_t devices[2]` 由 Board 层分配并通过 `Stepper_Init()` 注入，Device 层只保存指针 `static stepper_t *g_stepper_devices`；
 > - 运行时状态（`g_motor_states[]`）与板级硬件配置（`g_hw_cfgs[]`）完全分离，硬件配置通过 `stepper_hw_cfg_t` 由 Board 层注入；
-> - STEP 引脚在 PWM 外设模式和 GPIO 低电平模式之间动态切换，通过 `HAL_GPIO_InitPeripheralOutput` / `HAL_GPIO_InitOutput` 实现。
+> - STEP 引脚的 PWM/GPIO 模式切换属于具体 HAL/Board 适配细节；模板默认不绑定 STEP 引脚。
 
 ### Board 层
 
@@ -769,13 +770,11 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 声明设备对象数组 `stepper_t g_stepper_devices[2]`（M1 偏航角、M2 俯仰角）；
-- 初始化 EN/DIR GPIO 引脚为数字输出（STEP 引脚由 SysConfig `SYSCFG_DL_STEP_M1_PWM_init` / `SYSCFG_DL_STEP_M2_PWM_init` 配置为定时器外设功能）；
-- 填充 `stepper_hw_cfg_t[2]`（PWM 定时器实例、时钟频率、CC 通道、STEP/DIR/EN 引脚 IOMUX）和 `stepper_ctrl_timer_cfg_t`（控制定时器实例、重载值、IRQ 号）；
-- 提供 `Stepper_Board_Init()` 完成 GPIO 初始化并调用 `Stepper_Init(hw_cfgs, &ctrl_timer_cfg, g_stepper_devices)` 注入 Device 层；
-- 提供 `Stepper_Board_GetDevice(motorId)` 返回指定轴设备对象指针；
-- 托管 `TIMG12_IRQHandler` ISR，每 1ms 调用 `Stepper_Service1ms()`；
-- 所有 GPIO 操作通过 `HAL_GPIO_*`，所有 Timer 中断查询通过 `HAL_TimerG_GetPendingInterrupt`。
+- 默认模板不声明真实设备对象数组，不绑定 M1/M2 语义；
+- 真实板卡 profile 中填充 `stepper_hw_cfg_t[2]`（PWM 定时器实例、时钟频率、通道、STEP/DIR/EN 引脚）和 `stepper_ctrl_timer_cfg_t`（控制定时器实例、重载值、IRQ 号）；
+- 真实板卡 profile 中提供 `Stepper_Board_Init()` 完成 GPIO/TIM 初始化并调用 `Stepper_Init(hw_cfgs, &ctrl_timer_cfg, devices)` 注入 Device 层；
+- 真实板卡 profile 可提供 `Stepper_Board_GetDevice(motorId)` 返回指定轴设备对象指针；
+- 若需要 1ms 服务中断，由真实板卡 profile 托管对应 TIM IRQ 并调用 `Stepper_Service1ms()`。
 
 ### Facade 层
 
@@ -821,10 +820,10 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 定义两片 MT6701 在当前板上的具体引脚接线（共享 SCLK→PA3、共享 DO→PA2、M1 CSN→PA4、M2 CSN→PB0）；
-- 通过 `HAL_GPIO_InitOutput` / `HAL_GPIO_InitInput` 初始化 GPIO IOMUX；
-- 填充 `mt6701_bus_cfg_t` 并调用 `MT6701_Init(&bus_cfg)` 注入 Device 层；
-- 零 `DL_GPIO_*` 直接调用。
+- 默认模板不定义具体 MT6701 引脚接线；
+- 真实板卡 profile 通过 `0_hal` GPIO 封装初始化 SCLK/DO/CSN 等 GPIO；
+- 真实板卡 profile 填充 `mt6701_bus_cfg_t` 并调用 `MT6701_Init(&bus_cfg)` 注入 Device 层；
+- 不允许厂商 GPIO API 穿透到 Device/Lib/App。
 
 ---
 
@@ -839,7 +838,7 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
             -> Device: LED_On(led_t *)
                 -> ops->on()
                     -> Platform_GPIO_Write()
-                        -> HAL / DriverLib
+                        -> 0_hal / STM32 HAL
 ```
 
 ### 11.2 Encoder 调用链
@@ -863,7 +862,7 @@ GPIO 中断 GROUP1_IRQHandler
     -> Device 兼容 API
         -> Motor_SetPwmDevice(&g_default_motor, left, right)
             -> deadzone / limit
-                -> DL_Timer_setCaptureCompareValue()
+                -> 0_hal TIM/PWM 封装
 ```
 
 ---
@@ -973,7 +972,7 @@ App / Libs
         -> Board
             -> Device
                 -> HAL
-                    -> DriverLib / Registers
+                    -> STM32 HAL / Registers
 ```
 
 原则上不要反向依赖。例如 Device 层不应该 include App 层，Core 层不应该 include Board 层。
@@ -1051,7 +1050,7 @@ Stepper_ConfigSyncReverse(); // 步进电机同步反向是全局行为，非 pe
 
 禁止在 Core 层中加入：
 
-- SysConfig 宏；
+- CubeMX/SysConfig 等具体工程生成宏；
 - GPIO/I2C/SPI 具体句柄；
 - 某个具体外设的寄存器；
 - 业务层枚举；
@@ -1073,8 +1072,8 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 
 可以直接使用：
 
-- TI DriverLib；
-- SysConfig 生成宏；
+- STM32 HAL 或其他 MCU 厂商库；
+- CubeMX/SysConfig 等具体工程生成宏；
 - 寄存器结构体；
 - I2C/SPI/UART/Timer 等底层外设。
 
@@ -1087,7 +1086,7 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 | `hal_gpio.h/.c` | GPIO 读写、翻转、初始化（`HAL_GPIO_WritePin`、`HAL_GPIO_ReadPin`、`HAL_GPIO_TogglePin`、`HAL_GPIO_InitOutput`、`HAL_GPIO_InitInput`、`HAL_GPIO_InitPeripheralOutput`、`HAL_GPIO_EnableOutput`） |
 | `hal_gpio_int.h/.c` | GPIO 中断状态读写（`HAL_GPIO_GetEnabledInterruptStatus`、`HAL_GPIO_ClearInterruptStatus`） |
 | `hal_iic.h/.c` | I2C 控制器读写（`HAL_IIC_Init`、`HAL_IIC_WriteReg`、`HAL_IIC_ReadReg` 等） |
-| `hal_timer.h/.c` | TimerG 定时器/PWM 封装（`HAL_TimerG_StartCounter`、`HAL_TimerG_StopCounter`、`HAL_TimerG_SetLoadValue`、`HAL_TimerG_SetCCValue`、`HAL_TimerG_GetPendingInterrupt`） |
+| `hal_timer.h/.c` | STM32 TIM 定时器/PWM 封装（启动、停止、频率、占空/脉宽、中断状态等） |
 | `hal_uart.h/.c` | UART 基础收发 |
 
 #### 14.3.2 HAL 接口命名规范
@@ -1095,12 +1094,12 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 所有 HAL 层公共函数和类型使用 `HAL_` 前缀：
 
 ```c
-void HAL_GPIO_WritePin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin, uint8_t Value);
-uint8_t HAL_GPIO_ReadPin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin);
-void HAL_GPIO_TogglePin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin);
+void HAL_GPIO_WritePin(void *GPIOx, uint32_t GPIO_Pin, uint8_t Value);
+uint8_t HAL_GPIO_ReadPin(void *GPIOx, uint32_t GPIO_Pin);
+void HAL_GPIO_TogglePin(void *GPIOx, uint32_t GPIO_Pin);
 ```
 
-Device 层和 Board 层优先调用 HAL 接口，而不是直接调用 DriverLib。这保证了 MCU 迁移时只需修改 HAL 层。
+Device 层和 Board 层优先调用项目 `0_hal` 接口，而不是直接调用 STM32 HAL 或其他厂商库。这保证了 MCU 迁移时只需优先修改 HAL 层。
 
 ---
 
@@ -1218,7 +1217,7 @@ Board 层负责把通用 Device 实例绑定到当前这块板子的具体硬件
 
 Board 层可以包含：
 
-- SysConfig 宏；
+- CubeMX/SysConfig 等具体工程生成宏；
 - GPIO 端口和引脚；
 - Timer/PWM 实例；
 - I2C/SPI/UART 端口；
@@ -1325,8 +1324,8 @@ OLED_Facade_DrawCircle() -> OLED_DrawCircle()
 Facade 层不允许直接写：
 
 ```c
-DL_GPIO_setPins();
-DL_Timer_setCaptureCompareValue();
+STM32 HAL GPIO/TIM API;
+其他 MCU 厂商库 GPIO/TIM API;
 ```
 
 这些应属于 Board / Device / HAL。
@@ -1390,9 +1389,9 @@ App 层代码应该：
 ```text
 App / Libs -> 优先 include 4_facade/*.h
 Board      -> include 2_device/*.h
-Device     -> include 1_core/*.h、0_hal/*.h、必要 ti_msp_dl_config.h
+Device     -> include 1_core/*.h、0_hal/*.h；不 include 3_board/*.h
 Core       -> 不依赖 Device/Board/Facade
-HAL        -> 只依赖 DriverLib / ti_msp_dl_config.h
+HAL        -> 只依赖 STM32 HAL/CubeMX 生成头文件，并为未启用模块提供 fallback
 ```
 
 头文件应尽量最小化 include：
@@ -1554,23 +1553,28 @@ static inline int32_t limit_value(...);
 4. `5_compat/` 目录已删除，9 个转发头文件已移除。
 5. `0_hal/` 层文件已全部重命名为 `hal_*.h/.c`（原 `bsp_*.h/.c` → `hal_*.h/.c`），公共 API 使用 `HAL_` 前缀。
 6. `hal_gpio_int.h/.c` 已从 `hal_gpio.h/.c` 中分离，独立管理 GPIO 中断相关封装。
-7. Board 层 HAL 穿透问题已解决：所有 `DL_GPIO_*` 调用已替换为 `HAL_GPIO_*` 调用。
+7. Board 层厂商库穿透问题已解决：旧 MSPM0 `DL_*` 调用已从默认模板路径移除或收敛到 HAL 适配层。
 8. ICM42688/MPU6050 Device 层 I2C ops 注入模式已实现，消除了 Device→Board 反向 include。
 9. Stepper 步进电机全部重构完成：
-   - Device 层不再包含任何 SysConfig 宏、`DL_GPIO_*` 或 `DL_TimerG_*` 调用；
+   - Device 层不再包含任何具体板卡宏或厂商库直接调用；
    - 硬件配置通过 `stepper_hw_cfg_t` + `stepper_ctrl_timer_cfg_t` 由 Board 层注入；
    - 设备对象 `stepper_t devices[2]` 移到 Board 层声明，Device 层只保存指针；
    - `TIMG12_IRQHandler` ISR 移到 Board 层；
-   - 所有 GPIO 操作改为 `HAL_GPIO_*`，所有 Timer 操作改为 `HAL_TimerG_*`。
+   - 所有 GPIO/TIM 操作改为项目 `0_hal` 封装。
 10. HAL 层扩展：
-    - 新增 `hal_timer.h/.c`（`HAL_TimerG_StartCounter`、`HAL_TimerG_StopCounter`、`HAL_TimerG_SetLoadValue`、`HAL_TimerG_SetCCValue`、`HAL_TimerG_GetPendingInterrupt`）；
+    - 新增 `hal_timer.h/.c`，封装 TIM/PWM 基础能力；
     - `hal_gpio.h/.c` 新增 `HAL_GPIO_InitOutput`、`HAL_GPIO_InitInput`、`HAL_GPIO_InitPeripheralOutput`、`HAL_GPIO_EnableOutput`。
-11. MT6701 磁编码器驱动完成：Device 层 SSI 协议 + CRC-6 校验，Board 层引脚绑定 + `mt6701_bus_cfg_t` 注入，零 `DL_GPIO_*` 穿透。
+11. MT6701 磁编码器驱动完成：Device 层 SSI 协议 + CRC-6 校验，真实板卡适配时通过 Board/Profile 注入 `mt6701_bus_cfg_t`。
 12. **ops 全面注册**（2026-05-03）：
     - `device_display_ops_t` 从 3 项扩展至 **25 项**（基础操作 8 + 像素 2 + 图形 6 + 文字 7 + 位图/格式化 2），OLED 26 个 ops 回调全部实现；
     - `device_stepper_ops_t` 从 6 项扩展至 **11 项**（新增 set_enable_polarity、set_forward_level、set_pulse_width_us、toggle_direction、get_state），Stepper 公开 API 全部改为 ops 路由；
     - 新增 `device_magnetic_encoder_ops_t`（8 项），MT6701 从零创建 OOP 封装（`mt6701_t` 设备结构体 + ops 表 + `InitDevice()` + 公开 API 全部 ops 路由）。
 13. **11 个设备 ops 注册覆盖率全部达到 100%**（Buzzer toggle 除外，因无状态跟踪）。
+14. **STM32F407 模板默认空 Board 状态**（2026-05-29）：
+    - `3_board` 默认不绑定具体板卡外设对象、GPIO、I2C 地址、UART 句柄或中断入口；
+    - `0_hal` 对 CubeMX 外设模块做条件编译，未启用时保留 API 并返回不可用/安全默认值；
+    - Lib/App 默认通过 Facade 或注入 ops 访问外设，不直接 include Board；
+    - 真实板卡适配应通过 board profile、派生分支或明确的板级提交完成。
 
 ### 待优化
 

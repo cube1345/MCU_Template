@@ -1,7 +1,14 @@
 #include "OLED_menu.h"
 #include "../4_facade/key_facade.h"
+#include "my_system_lib.h"
+
+#if __has_include("FreeRTOS.h") && __has_include("task.h")
 #include "FreeRTOS.h"
 #include "task.h"
+#define MENU_HAS_FREERTOS 1
+#else
+#define MENU_HAS_FREERTOS 0
+#endif
 
 /* ============================================================================== */
 /* 核心定义（逻辑层指令与数据结构）                                                  */
@@ -37,16 +44,11 @@ typedef enum {
     MENU_UI_MESSAGE
 } MenuUiMode;
 
-typedef struct {
-    char *Name;
-    volatile float *Value;
-    float Min;
-    float Max;
-} ParamItem;
-
 #define MENU_LEN(x) ((uint8_t)(sizeof(x) / sizeof((x)[0])))
 
 static void Menu_Refresh(void);
+static uint32_t Menu_GetTickMs(void);
+static uint8_t Menu_IsDeadlineReached(uint32_t now_ms, uint32_t deadline_ms);
 
 /* ============================================================================== */
 /* 全局变量                                                                        */
@@ -66,22 +68,14 @@ static uint8_t g_param_step_index = 2;
 
 static const char *g_message_title = 0;
 static const char *g_message_desc = 0;
-static TickType_t g_message_deadline = 0;
+static uint32_t g_message_deadline = 0U;
 
 uint8_t g_task_choose_flag = 0;
 
-extern volatile float yaw_kp;
-extern volatile float yaw_ki;
-extern volatile float yaw_kd;
-
 extern MenuItem MainMenu[];
 
-/* 需要新增在线可调参数时，只需要继续往表里追加一项。 */
-static ParamItem g_param_items[] = {
-    {"yaw_kp", &yaw_kp, 0.000f, 5.000f},
-    {"yaw_ki", &yaw_ki, 0.000f, 5.000f},
-    {"yaw_kd", &yaw_kd, 0.000f, 5.000f},
-};
+static const Menu_ParamItem_t *g_param_items = 0;
+static uint8_t g_param_item_count = 0U;
 
 static const float g_param_steps[] = {
     0.001f,
@@ -134,7 +128,7 @@ static uint8_t Menu_Get_Hardware_Input(void)
 
 static uint8_t Menu_Get_Param_Count(void)
 {
-    return MENU_LEN(g_param_items);
+    return g_param_item_count;
 }
 
 static uint8_t Menu_Get_Param_List_Len(void)
@@ -160,6 +154,20 @@ static float Menu_Clamp_Float(float value, float min, float max)
     return value;
 }
 
+static uint32_t Menu_GetTickMs(void)
+{
+#if MENU_HAS_FREERTOS
+    return (uint32_t)xTaskGetTickCount();
+#else
+    return My_GetTick();
+#endif
+}
+
+static uint8_t Menu_IsDeadlineReached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (((int32_t)(now_ms - deadline_ms)) >= 0) ? 1U : 0U;
+}
+
 static void Menu_Draw_Scroll_Hint(uint8_t scroll_offset, uint8_t total_len)
 {
     if (scroll_offset + DISP_MAX_LINES < total_len) {
@@ -175,7 +183,7 @@ static void Menu_Show_Message(const char *title, const char *desc)
 {
     g_message_title = title;
     g_message_desc = desc;
-    g_message_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MENU_MESSAGE_TIME_MS);
+    g_message_deadline = Menu_GetTickMs() + MENU_MESSAGE_TIME_MS;
     g_menu_ui_mode = MENU_UI_MESSAGE;
     Menu_Refresh();
 }
@@ -249,7 +257,7 @@ static void Menu_Adjust_Step(int8_t direction)
 
 static void Menu_Adjust_Param_Value(int8_t direction)
 {
-    ParamItem *item;
+    const Menu_ParamItem_t *item;
     float value;
 
     if (g_param_edit_index >= Menu_Get_Param_Count()) {
@@ -257,6 +265,10 @@ static void Menu_Adjust_Param_Value(int8_t direction)
     }
 
     item = &g_param_items[g_param_edit_index];
+    if (item->Value == (volatile float *)0) {
+        return;
+    }
+
     value = *(item->Value);
 
     if (direction > 0) {
@@ -321,9 +333,11 @@ static void Menu_Refresh_Param_List(void)
             OLED_ShowString(16, y, "step", OLED_8X16);
             OLED_ShowFloatNum(56, y, Menu_Get_Current_Step(), 1, MENU_FLOAT_FRA_LEN, OLED_8X16);
         } else {
-            ParamItem *item = &g_param_items[real_index - 1U];
-            OLED_ShowString(16, y, item->Name, OLED_8X16);
-            OLED_ShowFloatNum(72, y, *(item->Value), MENU_FLOAT_INT_LEN, MENU_FLOAT_FRA_LEN, OLED_8X16);
+            const Menu_ParamItem_t *item = &g_param_items[real_index - 1U];
+            OLED_ShowString(16, y, (char *)item->Name, OLED_8X16);
+            if (item->Value != (volatile float *)0) {
+                OLED_ShowFloatNum(72, y, *(item->Value), MENU_FLOAT_INT_LEN, MENU_FLOAT_FRA_LEN, OLED_8X16);
+            }
         }
     }
 
@@ -333,13 +347,22 @@ static void Menu_Refresh_Param_List(void)
 
 static void Menu_Refresh_Param_Edit(void)
 {
-    ParamItem *item = &g_param_items[g_param_edit_index];
+    const Menu_ParamItem_t *item;
+
+    if (g_param_edit_index >= Menu_Get_Param_Count()) {
+        Menu_Return_To_Main_List();
+        return;
+    }
+
+    item = &g_param_items[g_param_edit_index];
 
     OLED_Clear();
     OLED_ShowString(0, 0, "edit", OLED_8X16);
-    OLED_ShowString(40, 0, item->Name, OLED_8X16);
+    OLED_ShowString(40, 0, (char *)item->Name, OLED_8X16);
     OLED_ShowString(0, 16, "val", OLED_8X16);
-    OLED_ShowFloatNum(40, 16, *(item->Value), MENU_FLOAT_INT_LEN, MENU_FLOAT_FRA_LEN, OLED_8X16);
+    if (item->Value != (volatile float *)0) {
+        OLED_ShowFloatNum(40, 16, *(item->Value), MENU_FLOAT_INT_LEN, MENU_FLOAT_FRA_LEN, OLED_8X16);
+    }
     OLED_ShowString(0, 32, "step", OLED_8X16);
     OLED_ShowFloatNum(40, 32, Menu_Get_Current_Step(), 1, MENU_FLOAT_FRA_LEN, OLED_8X16);
     OLED_ShowString(0, 48, "K0- K1+ L0/1E", OLED_8X16);
@@ -464,6 +487,15 @@ void Menu_Init(void)
     Menu_Refresh();
 }
 
+void Menu_SetParamItems(const Menu_ParamItem_t *items, uint8_t count)
+{
+    g_param_items = items;
+    g_param_item_count = (items == (const Menu_ParamItem_t *)0) ? 0U : count;
+    g_param_cursor = 0U;
+    g_param_scroll_offset = 0U;
+    g_param_edit_index = 0U;
+}
+
 /* ============================================================================== */
 /* 核心逻辑处理                                                                    */
 /* ============================================================================== */
@@ -584,7 +616,7 @@ static void Menu_Handle_Param_List(uint8_t cmd)
     {
         if (g_param_cursor == 0U) {
             g_menu_ui_mode = MENU_UI_STEP_EDIT;
-        } else {
+        } else if ((uint8_t)(g_param_cursor - 1U) < Menu_Get_Param_Count()) {
             g_param_edit_index = (uint8_t)(g_param_cursor - 1U);
             g_menu_ui_mode = MENU_UI_PARAM_EDIT;
         }
@@ -636,7 +668,8 @@ static void Menu_Handle_Step_Edit(uint8_t cmd)
 
 static void Menu_Handle_Message(uint8_t cmd)
 {
-    if (cmd != CMD_NONE || xTaskGetTickCount() >= g_message_deadline)
+    if ((cmd != CMD_NONE) ||
+        (Menu_IsDeadlineReached(Menu_GetTickMs(), g_message_deadline) != 0U))
     {
         Menu_Return_To_Main_List();
     }

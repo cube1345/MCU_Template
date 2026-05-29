@@ -8,9 +8,17 @@
 #include "yuntai_app.h"
 #include <math.h>
 #include <stdio.h>
+
+#if __has_include("FreeRTOS.h") && __has_include("task.h")
 #include "FreeRTOS.h"
 #include "task.h"
-#include "hal_gpio.h"
+#define YUNTAI_HAS_FREERTOS 1
+#else
+#define YUNTAI_HAS_FREERTOS 0
+#define taskENTER_CRITICAL() do { } while (0)
+#define taskEXIT_CRITICAL()  do { } while (0)
+#endif
+
 #include "my_system_lib.h"
 
 // just for test
@@ -190,7 +198,6 @@ static void Stepmotor_TestSingleMotor(Stepper_MotorId_t motorId,
                                       uint32_t pulseCount);
 static void Yuntai_Test_RunMotorTaskCycle(Stepper_MotorId_t motorId);
 static void Yuntai_Test_DelayMs(uint32_t delayMs);
-static void Yuntai_Test_DelayStepPeriod(void);
 static void Yuntai_SanitizeStabilizeConfig(Yuntai_StabilizeConfig_t *config);
 static float Yuntai_NormalizeAngleError(float targetDeg, float currentDeg);
 static uint32_t Yuntai_ComputeCommandFrequency(float absErrorDeg,
@@ -559,7 +566,7 @@ void Yuntai_App_InitWithConfig(const Yuntai_AppConfig_t *config)
         g_yuntaiConfig.syncReversePeriodMs = YUNTAI_DEFAULT_SYNC_REVERSE_PERIOD_MS;
     }
 
-    Stepper_Board_Init();
+    Stepper_Facade_Init();
 
     Yuntai_ApplyAxisConfig(YUNTAI_AXIS_YAW,
                            g_yuntaiConfig.yawFrequencyHz,
@@ -1269,14 +1276,10 @@ void Yuntai_SelfStab_ServicePitchTask(void)
 
 static void Stepmotor_ConfigStepPinsAsGpio(void)
 {
-    HAL_GPIO_InitOutput(GPIO_STEP_M1_PWM_C0_IOMUX);
-    HAL_GPIO_InitOutput(GPIO_STEP_M2_PWM_C0_IOMUX);
-
-    HAL_GPIO_ClearPin(GPIO_STEP_M1_PWM_C0_PORT, GPIO_STEP_M1_PWM_C0_PIN);
-    HAL_GPIO_ClearPin(GPIO_STEP_M2_PWM_C0_PORT, GPIO_STEP_M2_PWM_C0_PIN);
-
-    HAL_GPIO_EnableOutput(GPIO_STEP_M1_PWM_C0_PORT, GPIO_STEP_M1_PWM_C0_PIN);
-    HAL_GPIO_EnableOutput(GPIO_STEP_M2_PWM_C0_PORT, GPIO_STEP_M2_PWM_C0_PIN);
+    /*
+     * 模板默认不绑定 STEP 引脚。真实板卡需要在 Board/Profile 层完成
+     * Stepper 硬件注入，这里只保留兼容入口。
+     */
 }
 
 
@@ -1288,12 +1291,11 @@ static void Stepmotor_TestSingleMotor(Stepper_MotorId_t motorId,
 {
     const char *motorName;
     const char *dirName;
-    GPIO_Regs *stepPort;
-    uint32_t stepPin;
     uint32_t stepHighUs;
     uint32_t stepPeriodUs;
     uint32_t dirSetupUs;
-    uint32_t i;
+    uint32_t frequencyHz;
+    uint32_t runTimeMs;
 
     if (pulseCount == 0U) {
         return;
@@ -1301,8 +1303,6 @@ static void Stepmotor_TestSingleMotor(Stepper_MotorId_t motorId,
 
     motorName = (motorId == STEPPER_MOTOR_1) ? "M1" : "M2";
     dirName = (direction == STEPPER_DIR_FORWARD) ? "FWD" : "REV";
-    stepPort = (motorId == STEPPER_MOTOR_1) ? GPIO_STEP_M1_PWM_C0_PORT : GPIO_STEP_M2_PWM_C0_PORT;
-    stepPin = (motorId == STEPPER_MOTOR_1) ? GPIO_STEP_M1_PWM_C0_PIN : GPIO_STEP_M2_PWM_C0_PIN;
     if (g_yuntaiControlMode == YUNTAI_CONTROL_MODE_DIRECTION_CAL) {
         stepHighUs = g_yuntaiDirectionCalConfig.stepHighUs;
         stepPeriodUs = g_yuntaiDirectionCalConfig.stepPeriodUs;
@@ -1313,28 +1313,34 @@ static void Stepmotor_TestSingleMotor(Stepper_MotorId_t motorId,
         dirSetupUs = YUNTAI_TEST_DIR_SETUP_US;
     }
 
-    printf("%s %s: pulse=%u stepPeriod=%uus\r\n",
-           motorName,
-           dirName,
-           pulseCount,
-           stepPeriodUs);
-
-    /*
-     * 这里改为软件直接翻转 STEP 引脚，先把“PWM 定时器/引脚复用”这层变量排除掉。
-     * 45 度仅在驱动器为整步模式时成立；若驱动器开了细分，需要把
-     * YUNTAI_TEST_DRIVER_MICROSTEP 改成对应细分数。
-     */
-    Stepper_Enable(motorId, true);
-    Stepper_SetDirection(motorId, direction);
-    delay_us(dirSetupUs);
-
-    for (i = 0U; i < pulseCount; ++i) {
-        HAL_GPIO_SetPin(stepPort, stepPin);
-        delay_us(stepHighUs);
-        HAL_GPIO_ClearPin(stepPort, stepPin);
-        Yuntai_Test_DelayStepPeriod();
+    if (stepPeriodUs == 0U) {
+        return;
     }
 
+    frequencyHz = 1000000U / stepPeriodUs;
+    if (frequencyHz == 0U) {
+        frequencyHz = 1U;
+    }
+
+    runTimeMs = (uint32_t)(((uint64_t)pulseCount * (uint64_t)stepPeriodUs + 999ULL) / 1000ULL);
+    if (runTimeMs == 0U) {
+        runTimeMs = 1U;
+    }
+
+    printf("%s %s: pulse=%lu stepPeriod=%luus\r\n",
+           motorName,
+           dirName,
+           (unsigned long)pulseCount,
+           (unsigned long)stepPeriodUs);
+
+    Stepper_Enable(motorId, true);
+    (void)Stepper_SetPulseWidthUs(motorId, stepHighUs);
+    (void)Stepper_SetFrequency(motorId, frequencyHz);
+    Stepper_SetDirection(motorId, direction);
+    delay_us(dirSetupUs);
+    Stepper_Start(motorId);
+    Yuntai_Test_DelayMs(runTimeMs);
+    Stepper_Stop(motorId);
     Stepper_Enable(motorId, false);
 }
 
@@ -1359,30 +1365,9 @@ static void Yuntai_Test_DelayMs(uint32_t delayMs)
     if (delayMs == 0U) {
         return;
     }
+#if YUNTAI_HAS_FREERTOS
     vTaskDelay(pdMS_TO_TICKS(delayMs));
-}
-
-static void Yuntai_Test_DelayStepPeriod(void)
-{
-    uint32_t stepPeriodUs;
-    uint32_t stepHighUs;
-    uint32_t stepPeriodMs;
-
-    if (g_yuntaiControlMode == YUNTAI_CONTROL_MODE_DIRECTION_CAL) {
-        stepPeriodUs = g_yuntaiDirectionCalConfig.stepPeriodUs;
-        stepHighUs = g_yuntaiDirectionCalConfig.stepHighUs;
-    } else {
-        stepPeriodUs = YUNTAI_TEST_STEP_PERIOD_US;
-        stepHighUs = YUNTAI_TEST_STEP_HIGH_US;
-    }
-
-    stepPeriodMs = (stepPeriodUs + 999U) / 1000U;
-
-    if ((xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) &&
-        (__get_IPSR() == 0U)) {
-        vTaskDelay(pdMS_TO_TICKS(stepPeriodMs));
-        return;
-    }
-
-    delay_us(stepPeriodUs - stepHighUs);
+#else
+    delay_ms(delayMs);
+#endif
 }

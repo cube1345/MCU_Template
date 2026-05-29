@@ -196,15 +196,17 @@ typedef struct {
     uint8_t (*get_device_addr)(void);
 } icm42688_i2c_ops_t;
 
-extern volatile uint8_t  g_icm_debug_last_who_am_i;
-extern volatile int32_t  g_icm_debug_init_result;
-extern volatile uint8_t  g_icm_debug_last_read_status;
-extern volatile uint8_t  g_icm_debug_last_write_status;
-extern volatile uint8_t  g_icm_debug_last_reg;
-extern volatile uint8_t  g_icm_debug_last_len;
-extern volatile uint32_t g_icm_debug_read_count;
-extern volatile uint32_t g_icm_debug_write_count;
-extern volatile int32_t  g_icm_debug_last_io_result;
+typedef struct {
+    uint8_t last_who_am_i;
+    int32_t init_result;
+    uint8_t last_read_status;
+    uint8_t last_write_status;
+    uint8_t last_reg;
+    uint8_t last_len;
+    uint32_t read_count;
+    uint32_t write_count;
+    int32_t last_io_result;
+} icm42688_debug_info_t;
 
 typedef struct {
     icm42688_init_config_t init_config;
@@ -220,6 +222,7 @@ struct icm42688_s {
 void ICM42688_InitDevice(icm42688_t *me, const icm42688_cfg_t *cfg);
 int32_t ICM42688_ReadRawDevice(icm42688_t *me, icm42688_raw_data_t *raw_data);
 int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled_data);
+void ICM42688_GetDebugInfo(icm42688_debug_info_t *debug_info);
 
 /**
   * @brief  获取 ICM42688 默认初始化配置。

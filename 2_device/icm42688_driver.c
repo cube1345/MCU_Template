@@ -12,15 +12,15 @@ static bool g_icm42688_has_current_config = false;
 /* board 层注入的 I2C 传输操作，供全局遗留函数使用。 */
 static const icm42688_i2c_ops_t *g_i2c = ((const icm42688_i2c_ops_t *)0);
 
-volatile uint8_t g_icm_debug_last_who_am_i = 0U;
-volatile int32_t g_icm_debug_init_result = -2;
-volatile uint8_t g_icm_debug_last_read_status = 0xFFU;
-volatile uint8_t g_icm_debug_last_write_status = 0xFFU;
-volatile uint8_t g_icm_debug_last_reg = 0U;
-volatile uint8_t g_icm_debug_last_len = 0U;
-volatile uint32_t g_icm_debug_read_count = 0U;
-volatile uint32_t g_icm_debug_write_count = 0U;
-volatile int32_t g_icm_debug_last_io_result = -2;
+static volatile uint8_t g_icm_debug_last_who_am_i = 0U;
+static volatile int32_t g_icm_debug_init_result = -2;
+static volatile uint8_t g_icm_debug_last_read_status = 0xFFU;
+static volatile uint8_t g_icm_debug_last_write_status = 0xFFU;
+static volatile uint8_t g_icm_debug_last_reg = 0U;
+static volatile uint8_t g_icm_debug_last_len = 0U;
+static volatile uint32_t g_icm_debug_read_count = 0U;
+static volatile uint32_t g_icm_debug_write_count = 0U;
+static volatile int32_t g_icm_debug_last_io_result = -2;
 
 static int32_t ICM42688_Base_Init(void *me)
 {
@@ -89,6 +89,23 @@ int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled
     }
 
     return (int32_t)icm42688_convert_raw_data(&me->cfg.init_config, &raw_data, scaled_data);
+}
+
+void ICM42688_GetDebugInfo(icm42688_debug_info_t *debug_info)
+{
+    if (debug_info == (icm42688_debug_info_t *)0) {
+        return;
+    }
+
+    debug_info->last_who_am_i = g_icm_debug_last_who_am_i;
+    debug_info->init_result = g_icm_debug_init_result;
+    debug_info->last_read_status = g_icm_debug_last_read_status;
+    debug_info->last_write_status = g_icm_debug_last_write_status;
+    debug_info->last_reg = g_icm_debug_last_reg;
+    debug_info->last_len = g_icm_debug_last_len;
+    debug_info->read_count = g_icm_debug_read_count;
+    debug_info->write_count = g_icm_debug_write_count;
+    debug_info->last_io_result = g_icm_debug_last_io_result;
 }
 
 static int8_t icm42688_status_to_legacy_ret(icm42688_status_t driver_status)

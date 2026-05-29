@@ -44,6 +44,21 @@ void LED_R_Toggle(void)
     LED_Toggle(LED_Board_GetRed());
 }
 
+void LED_Test_On(void)
+{
+    LED_On(LED_Board_GetTest());
+}
+
+void LED_Test_Off(void)
+{
+    LED_Off(LED_Board_GetTest());
+}
+
+void LED_Test_Toggle(void)
+{
+    LED_Toggle(LED_Board_GetTest());
+}
+
 void LED_Driver_Init(void)
 {
     LED_Board_Init();

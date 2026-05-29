@@ -22,7 +22,9 @@
 #define MY_UART2_TX_RETRY_MAX 100000U
 #endif
 
-uint32_t SystemCoreClock = 80000000;
+#ifndef MY_SYSTEM_ENABLE_HARDFAULT_HANDLER
+#define MY_SYSTEM_ENABLE_HARDFAULT_HANDLER 0U
+#endif
 
 
 // 定义全局微秒计数变量，务必加 volatile 防止被编译器优化
@@ -285,6 +287,7 @@ void HardFault_HandlerC(uint32_t *sp)
     }
 }
 
+#if (MY_SYSTEM_ENABLE_HARDFAULT_HANDLER == 1U)
 // 汇编入口（naked）：判断使用 MSP 还是 PSP，并把栈指针传给 C 处理函数
 __attribute__((naked)) void HardFault_Handler(void)
 {
@@ -304,3 +307,4 @@ __attribute__((naked)) void HardFault_Handler(void)
         "ldr r3, =HardFault_HandlerC \n"
         "bx r3                 \n");
 }
+#endif

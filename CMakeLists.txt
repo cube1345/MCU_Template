@@ -37,6 +37,16 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+file(GLOB_RECURSE USER_LAYER_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/0_hal/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/1_core/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/2_device/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/3_board/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/4_facade/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/5_libs/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/6_apps/*.c
+)
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -45,11 +55,19 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    ${USER_LAYER_SOURCES}
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/0_hal
+    ${CMAKE_CURRENT_SOURCE_DIR}/1_core
+    ${CMAKE_CURRENT_SOURCE_DIR}/2_device
+    ${CMAKE_CURRENT_SOURCE_DIR}/3_board
+    ${CMAKE_CURRENT_SOURCE_DIR}/4_facade
+    ${CMAKE_CURRENT_SOURCE_DIR}/5_libs
+    ${CMAKE_CURRENT_SOURCE_DIR}/6_apps
 )
 
 # Add project symbols (macros)

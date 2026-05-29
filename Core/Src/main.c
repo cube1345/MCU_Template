@@ -24,6 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "led_facade.h"
 
 /* USER CODE END Includes */
 
@@ -92,7 +93,8 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   volatile uint32_t num1 = 0,num2 = 0,num3 = 0,num4 = 0,num5 = 0;
-    
+
+  LED_Driver_Init();
 
 
 
@@ -110,7 +112,10 @@ int main(void)
     num5 += num1;
     num1 = num5 - num2;
     num2 = num1 + num3;
+
     /* USER CODE BEGIN 3 */
+    LED_Test_Toggle();
+    HAL_Delay(3000U);
   }
   /* USER CODE END 3 */
 }

@@ -1,11 +1,26 @@
 #include "car_app.h"
 
-extern int g_target_speedA;
-extern int g_target_speedB;
+static int g_car_target_speed_a = 0;
+static int g_car_target_speed_b = 0;
 
 void Car_Run(int speed, float bias)
 {
-    g_target_speedA = speed*bias;
-    g_target_speedB = speed*(2-bias);
+    Car_SetTargetSpeed((int)((float)speed * bias),
+                       (int)((float)speed * (2.0f - bias)));
 }
 
+void Car_SetTargetSpeed(int speedA, int speedB)
+{
+    g_car_target_speed_a = speedA;
+    g_car_target_speed_b = speedB;
+}
+
+int Car_GetTargetSpeedA(void)
+{
+    return g_car_target_speed_a;
+}
+
+int Car_GetTargetSpeedB(void)
+{
+    return g_car_target_speed_b;
+}

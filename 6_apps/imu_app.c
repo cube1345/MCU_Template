@@ -1,7 +1,5 @@
 #include "imu_app.h"
 
-#include "imu_int.h"
-
 /* Default gyro bias calibration sample count used by the application layer. */
 #define IMU_APP_DEFAULT_BIAS_SAMPLE_COUNT    (200U)
 
@@ -108,17 +106,24 @@ imu_status_t imu_app_init(void)
         return imu_status;
     }
 
-    imu_status = imu_int_set_icm42688_init_config(&g_imu_app_config.icm42688_init_config);
+    /*
+     * 模板默认通过 IMU.c 的 legacy binding 走 ICM42688 Facade。
+     * ICM42688 细项配置在未绑定具体板卡时只作为 app 配置快照保留。
+     */
+    (void)g_imu_app_config.icm42688_init_config;
+
+    IMU_init();
+    if (IMU_IsReady() == 0U) {
+        g_imu_app_is_ready = false;
+        return IMU_STATUS_ERROR_SENSOR;
+    }
+
+    imu_status = imu_set_config(&g_imu_app_config.imu_config);
     if (imu_status != IMU_STATUS_OK) {
         return imu_status;
     }
 
-    imu_status = imu_int_set_imu_config(&g_imu_app_config.imu_config);
-    if (imu_status != IMU_STATUS_OK) {
-        return imu_status;
-    }
-
-    imu_status = imu_int_init(
+    imu_status = imu_calibrate_gyro_bias(
         g_imu_app_config.bias_sample_count,
         g_imu_app_config.bias_interval_ms);
     if (imu_status != IMU_STATUS_OK) {

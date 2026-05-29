@@ -6,5 +6,6 @@
 void LED_Board_Init(void);
 led_t *LED_Board_GetBlue(void);
 led_t *LED_Board_GetRed(void);
+led_t *LED_Board_GetTest(void);
 
 #endif

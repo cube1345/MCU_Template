@@ -7,6 +7,9 @@ void LED_B_Toggle(void);
 void LED_R_On(void);
 void LED_R_Off(void);
 void LED_R_Toggle(void);
+void LED_Test_On(void);
+void LED_Test_Off(void);
+void LED_Test_Toggle(void);
 void LED_Driver_Init(void);
 
 #endif

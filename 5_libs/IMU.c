@@ -2,7 +2,6 @@
 
 #include <math.h>
 #include "../4_facade/icm42688_facade.h"
-#include "../3_board/icm42688_board.h"
 #include "my_system_lib.h"
 
 
@@ -1008,7 +1007,7 @@ static imu_status_t imu_legacy_sensor_init(void *user_data)
 
     (void) user_data;
 
-    dev = ICM42688_Board_GetDevice();
+    dev = ICM42688_Facade_GetDevice();
 
     if (g_imu_legacy_icm_config_ready == false) {
         driver_status = icm42688_get_default_init_config(&g_imu_legacy_icm_init_config);
@@ -1022,7 +1021,7 @@ static imu_status_t imu_legacy_sensor_init(void *user_data)
         return IMU_STATUS_ERROR_SENSOR;
     }
 
-    driver_status = (icm42688_status_t) dev->ops->init(dev);
+    driver_status = ICM42688_Facade_InitDevice();
     return imu_legacy_convert_driver_status(driver_status);
 }
 
@@ -1040,12 +1039,12 @@ static imu_status_t imu_legacy_sensor_read(
         return IMU_STATUS_ERROR_PARAM;
     }
 
-    dev = ICM42688_Board_GetDevice();
+    dev = ICM42688_Facade_GetDevice();
     if ((dev == 0) || (dev->ops == 0) || (dev->ops->read_raw == 0)) {
         return IMU_STATUS_ERROR_SENSOR;
     }
 
-    driver_status = (icm42688_status_t) dev->ops->read_raw(dev, &raw_data);
+    driver_status = ICM42688_Facade_ReadRaw(&raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return imu_legacy_convert_driver_status(driver_status);
     }
@@ -1133,7 +1132,7 @@ void IMU_init(void)
 
     g_imu_legacy_icm_config_ready = true;
 
-    ICM42688_Board_Init();
+    ICM42688_Facade_Init();
 
     sensor_ops.init = imu_legacy_sensor_init;
     sensor_ops.read = imu_legacy_sensor_read;
