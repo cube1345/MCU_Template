@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stdio.h"
-#include "ti_msp_dl_config.h"
+#include "stm32f4xx_hal.h"
 
 uint32_t My_GetTick(void);
 uint64_t My_GetTimeUs(void);
@@ -22,7 +22,7 @@ void DebugUart2_WriteJustFloatFrame(const float *values, uint32_t count);
 
 
 
-uint8_t MY_GPIO_ReadPin(GPIO_Regs *GPIOx, uint32_t GPIO_Pin);
+uint8_t MY_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
 
 
 //一些出现之前出现的问题

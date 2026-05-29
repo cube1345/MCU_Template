@@ -1,5 +1,4 @@
 #include "motor_driver.h"
-#include "../3_board/motor_board.h"
 
 #define MOTOR_ABS(a) ((a) > 0 ? (a) : (-(a)))
 
@@ -39,11 +38,11 @@ static void Motor_WriteChannel(const motor_channel_hw_t *hw, int32_t pwm, int32_
     }
 
     if (pwm >= 0) {
-        DL_Timer_setCaptureCompareValue(hw->timer, (uint32_t)MOTOR_ABS(period - pwm), hw->cc_forward);
-        DL_Timer_setCaptureCompareValue(hw->timer, (uint32_t)MOTOR_ABS(period), hw->cc_reverse);
+        HAL_TimerG_SetCCValue(hw->timer, (uint32_t)MOTOR_ABS(period - pwm), hw->cc_forward);
+        HAL_TimerG_SetCCValue(hw->timer, (uint32_t)MOTOR_ABS(period), hw->cc_reverse);
     } else {
-        DL_Timer_setCaptureCompareValue(hw->timer, (uint32_t)MOTOR_ABS(period), hw->cc_forward);
-        DL_Timer_setCaptureCompareValue(hw->timer, (uint32_t)MOTOR_ABS(period + pwm), hw->cc_reverse);
+        HAL_TimerG_SetCCValue(hw->timer, (uint32_t)MOTOR_ABS(period), hw->cc_forward);
+        HAL_TimerG_SetCCValue(hw->timer, (uint32_t)MOTOR_ABS(period + pwm), hw->cc_reverse);
     }
 }
 
@@ -98,8 +97,8 @@ void Motor_StartDevice(motor_t *me)
         return;
     }
 
-    DL_Timer_startCounter(me->cfg.left.timer);
-    DL_Timer_startCounter(me->cfg.right.timer);
+    HAL_TimerG_StartCounter(me->cfg.left.timer);
+    HAL_TimerG_StartCounter(me->cfg.right.timer);
 }
 
 void Motor_StopDevice(motor_t *me)
@@ -109,8 +108,8 @@ void Motor_StopDevice(motor_t *me)
     }
 
     Motor_SetPwmDevice(me, 0, 0);
-    DL_Timer_stopCounter(me->cfg.left.timer);
-    DL_Timer_stopCounter(me->cfg.right.timer);
+    HAL_TimerG_StopCounter(me->cfg.left.timer);
+    HAL_TimerG_StopCounter(me->cfg.right.timer);
 }
 
 void Motor_SetPwmDevice(motor_t *me, int32_t pwm_left, int32_t pwm_right)
@@ -145,38 +144,6 @@ int32_t Motor_VelocityCalcDevice(motor_t *me, uint8_t channel, int32_t target, i
 
     output = (int32_t)((me->cfg.kp * (float)bias) + (me->cfg.ki * (float)(*integral)));
     return Motor_LimitValue(output, -me->cfg.pwm_limit, me->cfg.pwm_limit);
-}
-
-void Motor_Init(void)
-{
-    Motor_Board_Init();
-}
-
-int Velocity_A(int TargetVelocity, int CurrentVelocity)
-{
-    motor_t *m = Motor_Board_GetDefault();
-    if ((m == 0) || (m->ops == 0) || (m->ops->velocity_calc == 0)) {
-        return 0;
-    }
-    return (int)m->ops->velocity_calc(m, MOTOR_CHANNEL_A, TargetVelocity, CurrentVelocity);
-}
-
-int Velocity_B(int TargetVelocity, int CurrentVelocity)
-{
-    motor_t *m = Motor_Board_GetDefault();
-    if ((m == 0) || (m->ops == 0) || (m->ops->velocity_calc == 0)) {
-        return 0;
-    }
-    return (int)m->ops->velocity_calc(m, MOTOR_CHANNEL_B, TargetVelocity, CurrentVelocity);
-}
-
-void Set_PWM(int pwma, int pwmb)
-{
-    motor_t *m = Motor_Board_GetDefault();
-    if ((m == 0) || (m->ops == 0) || (m->ops->set_pwm == 0)) {
-        return;
-    }
-    m->ops->set_pwm(m, pwma, pwmb);
 }
 
 void Motor_Start(motor_t *me)

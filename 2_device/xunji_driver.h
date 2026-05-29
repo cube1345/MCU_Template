@@ -30,8 +30,4 @@ struct xunji_s {
 void Xunji_InitDevice(xunji_t *me, const xunji_cfg_t *cfg);
 int32_t Xunji_ReadAll(xunji_t *me, uint8_t *xunji, uint8_t count);
 
-int Xunji_Driver_Bind(const Xunji_ReadPin_FP *pins, uint8_t count);
-int Xunji_Get(uint8_t *xunji, uint8_t count);
-void Xunji_Init(void);
-
 #endif /* MYUSED_MYDEVICES_XUNJI_DRIVER_H */

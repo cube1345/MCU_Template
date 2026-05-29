@@ -7,9 +7,9 @@
  */
 
 #include <stdint.h>
-#include "ti_msp_dl_config.h"
 #include "device_base.h"
 #include "device_ops.h"
+#include "hal_timer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,9 +26,9 @@ typedef struct motor_s motor_t;
 typedef device_motor_ops_t motor_base_ops_t;
 
 typedef struct {
-    GPTIMER_Regs *timer;
-    DL_TIMER_CC_INDEX cc_forward;
-    DL_TIMER_CC_INDEX cc_reverse;
+    platform_timer_t *timer;
+    platform_timer_channel_t cc_forward;
+    platform_timer_channel_t cc_reverse;
     uint8_t reverse_logic;
 } motor_channel_hw_t;
 
@@ -63,10 +63,6 @@ void Motor_Stop(motor_t *me);
 void Motor_SetPwm(motor_t *me, int32_t pwml, int32_t pwmr);
 int32_t Motor_VelocityCalc(motor_t *me, uint8_t channel, int32_t target, int32_t current);
 
-void Motor_Init(void);
-int Velocity_A(int TargetVelocity, int CurrentVelocity);
-int Velocity_B(int TargetVelocity, int CurrentVelocity);
-void Set_PWM(int pwma, int pwmb);
 int limit_PWM(int value, int low, int high);
 int motor_apply_deadzone(int pwm);
 

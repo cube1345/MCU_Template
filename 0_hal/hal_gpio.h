@@ -18,6 +18,17 @@
 #include <stdint.h>
 #include "stm32f4xx_hal.h"
 
+#if defined(HAL_GPIO_MODULE_ENABLED) && defined(__has_include)
+#if __has_include("stm32f4xx_hal_gpio.h")
+#include "stm32f4xx_hal_gpio.h"
+#define HAL_GPIO_STM32_HAS_GPIO        (1U)
+#endif
+#endif
+
+#ifndef HAL_GPIO_STM32_HAS_GPIO
+#define HAL_GPIO_STM32_HAS_GPIO        (0U)
+#endif
+
 /** @brief GPIO 端口类型（GPIO_TypeDef 指针别名） */
 typedef GPIO_TypeDef *platform_gpio_port_t;
 /** @brief GPIO 引脚类型（pin mask） */

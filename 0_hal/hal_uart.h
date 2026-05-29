@@ -5,6 +5,21 @@
 #include <stdbool.h>
 #include "stm32f4xx_hal.h"
 
+#if defined(HAL_UART_MODULE_ENABLED) && defined(__has_include)
+#if __has_include("stm32f4xx_hal_uart.h")
+#include "stm32f4xx_hal_uart.h"
+#define HAL_UART_STM32_HAS_UART        (1U)
+#endif
+#endif
+
+#ifndef HAL_UART_STM32_HAS_UART
+#define HAL_UART_STM32_HAS_UART        (0U)
+#endif
+
+#if (HAL_UART_STM32_HAS_UART == 0U)
+typedef void UART_HandleTypeDef;
+#endif
+
 typedef UART_HandleTypeDef *platform_uart_regs_t;
 typedef IRQn_Type platform_uart_irqn_t;
 

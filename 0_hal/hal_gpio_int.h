@@ -14,6 +14,17 @@
 #include <stdint.h>
 #include "stm32f4xx_hal.h"
 
+#if defined(HAL_EXTI_MODULE_ENABLED) && defined(HAL_GPIO_MODULE_ENABLED) && defined(__has_include)
+#if __has_include("stm32f4xx_hal_gpio.h")
+#include "stm32f4xx_hal_gpio.h"
+#define HAL_GPIO_INT_STM32_HAS_EXTI    (1U)
+#endif
+#endif
+
+#ifndef HAL_GPIO_INT_STM32_HAS_EXTI
+#define HAL_GPIO_INT_STM32_HAS_EXTI    (0U)
+#endif
+
 /**
  * @brief  读取已使能的 GPIO 中断状态
  * @param  GPIOx GPIO 端口，STM32 EXTI pending 只与 pin 相关，当前参数保留用于接口统一

@@ -48,10 +48,7 @@ typedef enum {
  *
  * 由 Board 层根据实际板级接线填充, 通过 mt6701_bus_cfg_t 注入 Device 层。
  */
-typedef struct {
-    GPIO_Regs *port;
-    uint32_t   pin;
-} mt6701_gpio_t;
+typedef platform_gpio_t mt6701_gpio_t;
 
 /**
  * @brief MT6701 SSI 总线引脚配置

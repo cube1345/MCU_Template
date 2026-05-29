@@ -1,5 +1,4 @@
 #include "xunji_driver.h"
-#include "../3_board/xunji_board.h"
 
 static int32_t xunji_read_all_impl(xunji_t *me, uint8_t *xunji, uint8_t count)
 {
@@ -58,35 +57,4 @@ int32_t Xunji_ReadAll(xunji_t *me, uint8_t *xunji, uint8_t count)
         return -1;
     }
     return me->ops->read_all(me, xunji, count);
-}
-
-int Xunji_Driver_Bind(const Xunji_ReadPin_FP *pins, uint8_t count)
-{
-    xunji_cfg_t cfg;
-    xunji_t *dev;
-    uint8_t i;
-
-    if ((pins == 0) || (count < XUNJI_COUNT)) {
-        return -1;
-    }
-
-    for (i = 0U; i < XUNJI_COUNT; ++i) {
-        cfg.pins[i] = pins[i];
-    }
-    cfg.active_high = 1U;
-
-    dev = Xunji_Board_GetDefault();
-    Xunji_InitDevice(dev, &cfg);
-    return (dev->base.is_init != 0U) ? 0 : -1;
-}
-
-int Xunji_Get(uint8_t *xunji, uint8_t count)
-{
-    xunji_t *dev = Xunji_Board_GetDefault();
-    return (int)Xunji_ReadAll(dev, xunji, count);
-}
-
-void Xunji_Init(void)
-{
-    /* Board-layer binding has been moved to Xunji_Board_Init(). */
 }

@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 #include "hal_gpio.h"
-#include "ti_msp_dl_config.h"
+#include "hal_timer.h"
 #include "device_base.h"
 #include "device_ops.h"
 
@@ -66,12 +66,11 @@ typedef enum {
  * Device 层在运行期间只读，不修改这些字段。
  */
 typedef struct {
-    GPTIMER_Regs *pwmInst;              /**< STEP 脉冲对应的 PWM 定时器实例 */
+    platform_timer_t *pwmInst;          /**< STEP 脉冲对应的 PWM 定时器实例 */
     uint32_t pwmClockHz;                /**< PWM 定时器输入时钟，单位 Hz */
-    DL_TIMER_CC_INDEX pwmCcIndex;       /**< STEP 输出使用的比较通道 */
+    platform_timer_channel_t pwmCcIndex; /**< STEP 输出使用的比较通道 */
     platform_gpio_t step;               /**< STEP GPIO */
-    uint32_t stepIomux;                 /**< STEP 引脚 IOMUX */
-    uint32_t stepIomuxFunc;             /**< STEP 引脚外设复用功能 */
+    uint32_t stepAlternate;             /**< STEP 引脚 STM32 alternate function */
     platform_gpio_t dir;                /**< DIR GPIO */
     platform_gpio_t en;                 /**< EN GPIO */
     Stepper_EnablePolarity_t enPolarity; /**< EN 有效电平 */
@@ -84,7 +83,7 @@ typedef struct {
  * 用于 1ms 控制节拍（Stepper_Service1ms），由 Board 层提供。
  */
 typedef struct {
-    GPTIMER_Regs *timerInst;            /**< 控制定时器实例 */
+    platform_timer_t *timerInst;        /**< 控制定时器实例 */
     uint32_t loadValue;                 /**< 定时器重载值 */
     IRQn_Type irqNum;                   /**< 中断号 */
 } stepper_ctrl_timer_cfg_t;

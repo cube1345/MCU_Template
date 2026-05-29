@@ -1,8 +1,18 @@
 #include "my_system_lib.h"
-#include "FreeRTOS.h"
-#include "task.h"
 #include "hal_timer.h"
 #include "../4_facade/uart_facade.h"
+
+#if defined(__has_include)
+#if __has_include("FreeRTOS.h") && __has_include("task.h")
+#include "FreeRTOS.h"
+#include "task.h"
+#define MY_SYSTEM_HAS_FREERTOS         (1U)
+#endif
+#endif
+
+#ifndef MY_SYSTEM_HAS_FREERTOS
+#define MY_SYSTEM_HAS_FREERTOS         (0U)
+#endif
 
 #ifndef MY_PRINTF_ENABLE
 #define MY_PRINTF_ENABLE 0U
@@ -18,17 +28,31 @@ uint32_t SystemCoreClock = 80000000;
 // 定义全局微秒计数变量，务必加 volatile 防止被编译器优化
 volatile uint32_t g_my_tick_ms = 0;
 
+#if defined(SYSTIMER_INST) && defined(SYSTIMER_INST_LOAD_VALUE)
+#define MY_SYSTEM_HAS_SYSTIMER         (1U)
+#else
+#define MY_SYSTEM_HAS_SYSTIMER         (0U)
+#endif
+
+static void delay_cycles(uint32_t cycles)
+{
+    while (cycles-- > 0U) {
+        __NOP();
+    }
+}
+
 /**
  * @brief 定时器中断服务函数
  * 函数名必须与 SysConfig 中生成的宏 xxxxxxIRQHandler 一致
  */
+#if (MY_SYSTEM_HAS_SYSTIMER == 1U)
 void SYSTIMER_INST_IRQHandler(void)  //递增毫秒级系统时间
 {
     // 获取当前待处理的中断并自动清除标志位
     switch (HAL_TimerA_GetPendingInterrupt(SYSTIMER_INST)) {
 
         // 当计数器达到 0（Zero Event）时触发
-        case DL_TIMER_IIDX_ZERO:
+        case HAL_TIMER_IIDX_ZERO:
             g_my_tick_ms++;  // 毫秒计数自增
             //
             break;
@@ -38,6 +62,7 @@ void SYSTIMER_INST_IRQHandler(void)  //递增毫秒级系统时间
             break;
     }
 }
+#endif
 
 /**
  * @brief 获取当前系统启动后的毫秒数
@@ -50,6 +75,7 @@ uint32_t My_GetTick(void)
 
 uint64_t My_GetTimeUs(void)
 {
+#if (MY_SYSTEM_HAS_SYSTIMER == 1U)
     uint32_t tickMsBefore;
     uint32_t tickMsAfter;
     uint32_t timerCount;
@@ -68,6 +94,9 @@ uint64_t My_GetTimeUs(void)
     elapsedUsInMs = SYSTIMER_INST_LOAD_VALUE - timerCount;
 
     return ((uint64_t) tickMsBefore * 1000ULL) + (uint64_t) elapsedUsInMs;
+#else
+    return (uint64_t)g_my_tick_ms * 1000ULL;
+#endif
 }
 
 
@@ -106,63 +135,44 @@ void delay_ms(uint32_t ms)
     }
 
     /* In task context after scheduler start, yield CPU instead of busy-looping. */
+#if (MY_SYSTEM_HAS_FREERTOS == 1U)
     if ((xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) &&
         (__get_IPSR() == 0U)) {
         vTaskDelay(pdMS_TO_TICKS(ms));
         return;
     }
+#endif
 
     delay_cycles((SystemCoreClock / 1000U) * ms);
 }
 
+uint8_t MY_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
+{
+#ifdef HAL_GPIO_MODULE_ENABLED
+    if (GPIOx == NULL) {
+        return 0U;
+    }
+    return (HAL_GPIO_ReadPin(GPIOx, GPIO_Pin) == GPIO_PIN_SET) ? 1U : 0U;
+#else
+    (void)GPIOx;
+    (void)GPIO_Pin;
+    return 0U;
+#endif
+}
+
 bool DebugUart2_WriteChar(uint8_t ch)
 {
-    uint32_t retry = MY_UART2_TX_RETRY_MAX;
-
-    while (!Platform_UART_TransmitDataCheck(&g_uart2_debug, ch)) {
-        if (retry-- == 0U) {
-            return false;
-        }
-    }
-
-    return true;
+    (void)ch;
+    /* Template default: no board debug UART binding. */
+    return false;
 }
 
 bool DebugUart2_WriteBuffer(const uint8_t *data, uint32_t length)
 {
-    const uint8_t *txPtr;
-    uint32_t remain;
-    uint32_t sent;
-    uint32_t retry = MY_UART2_TX_RETRY_MAX;
-
-    if ((data == NULL) || (length == 0U)) {
-        return false;
-    }
-
-    txPtr = data;
-    remain = length;
-
-    while (remain > 0U) {
-        sent = Platform_UART_FillTXFIFO(&g_uart2_debug, (uint8_t *)txPtr, remain);
-        if (sent == 0U) {
-            if (retry-- == 0U) {
-                return false;
-            }
-        } else {
-            retry = MY_UART2_TX_RETRY_MAX;
-            txPtr += sent;
-            remain -= sent;
-        }
-    }
-
-    retry = MY_UART2_TX_RETRY_MAX;
-    while (Platform_UART_IsBusy(&g_uart2_debug)) {
-        if (retry-- == 0U) {
-            return false;
-        }
-    }
-
-    return true;
+    (void)data;
+    (void)length;
+    /* Template default: no board debug UART binding. */
+    return false;
 }
 
 void DebugUart2_WriteString(const char *str)
@@ -294,6 +304,3 @@ __attribute__((naked)) void HardFault_Handler(void)
         "ldr r3, =HardFault_HandlerC \n"
         "bx r3                 \n");
 }
-
-
-

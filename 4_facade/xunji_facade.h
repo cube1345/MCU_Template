@@ -8,4 +8,7 @@
 
 #include "../2_device/xunji_driver.h"
 
+int Xunji_Get(uint8_t *xunji, uint8_t count);
+void Xunji_Init(void);
+
 #endif /* MYUSED_MYFACADES_XUNJI_FACADE_H */

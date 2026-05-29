@@ -35,6 +35,7 @@ static Stepper_SyncReverse_t g_syncReverse;
 /* ------------------------------------------------------------------ */
 
 static Stepper_MotorState_t *Stepper_GetMotor(Stepper_MotorId_t motorId);
+static stepper_t *Stepper_GetDevice(Stepper_MotorId_t motorId);
 static void Stepper_ApplyEnableLevel(Stepper_MotorState_t *motor);
 static void Stepper_ApplyDirectionLevel(Stepper_MotorState_t *motor);
 static void Stepper_SwitchStepPinToPeripheral(Stepper_MotorState_t *motor);
@@ -270,6 +271,14 @@ static Stepper_MotorState_t *Stepper_GetMotor(Stepper_MotorId_t motorId)
     return &g_motor_states[(uint32_t)motorId];
 }
 
+static stepper_t *Stepper_GetDevice(Stepper_MotorId_t motorId)
+{
+    if ((g_stepper_devices == 0) || ((uint32_t)motorId >= STEPPER_MOTOR_COUNT)) {
+        return 0;
+    }
+    return &g_stepper_devices[(uint32_t)motorId];
+}
+
 static void Stepper_ApplyEnableLevel(Stepper_MotorState_t *motor)
 {
     const stepper_hw_cfg_t *hw;
@@ -324,7 +333,7 @@ static void Stepper_SwitchStepPinToPeripheral(Stepper_MotorState_t *motor)
     }
     const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    HAL_GPIO_InitPeripheralOutput(hw->stepIomux, hw->stepIomuxFunc);
+    HAL_GPIO_InitPeripheralOutput(hw->step.port, hw->step.pin, hw->stepAlternate);
     HAL_GPIO_EnableOutput(hw->step.port, hw->step.pin);
 }
 
@@ -339,7 +348,7 @@ static void Stepper_SwitchStepPinToGpioLow(Stepper_MotorState_t *motor)
     }
     const stepper_hw_cfg_t *hw = &g_hw_cfgs[idx];
 
-    HAL_GPIO_InitOutput(hw->stepIomux);
+    HAL_GPIO_InitOutput(hw->step.port, hw->step.pin);
     HAL_GPIO_WritePin(hw->step.port, hw->step.pin, 0U);
     HAL_GPIO_EnableOutput(hw->step.port, hw->step.pin);
 }
@@ -467,6 +476,10 @@ void Stepper_Init(const stepper_hw_cfg_t hw_cfgs[STEPPER_MOTOR_COUNT],
 {
     uint32_t i;
 
+    if ((hw_cfgs == 0) || (ctrl_timer_cfg == 0) || (devices == 0)) {
+        return;
+    }
+
     /* 存储 Board 层注入的硬件配置和设备对象指针 */
     for (i = 0U; i < STEPPER_MOTOR_COUNT; ++i) {
         g_hw_cfgs[i] = hw_cfgs[i];
@@ -500,7 +513,10 @@ void Stepper_Init(const stepper_hw_cfg_t hw_cfgs[STEPPER_MOTOR_COUNT],
 
 void Stepper_Enable(Stepper_MotorId_t motorId, bool enable)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->enable == 0)) {
         return;
     }
@@ -516,7 +532,10 @@ void Stepper_EnableAll(bool enable)
 void Stepper_SetEnablePolarity(Stepper_MotorId_t motorId,
                                Stepper_EnablePolarity_t polarity)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->set_enable_polarity == 0)) {
         return;
     }
@@ -525,7 +544,10 @@ void Stepper_SetEnablePolarity(Stepper_MotorId_t motorId,
 
 void Stepper_SetForwardLevel(Stepper_MotorId_t motorId, bool forwardLevelHigh)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->set_forward_level == 0)) {
         return;
     }
@@ -535,7 +557,10 @@ void Stepper_SetForwardLevel(Stepper_MotorId_t motorId, bool forwardLevelHigh)
 void Stepper_SetDirection(Stepper_MotorId_t motorId,
                           Stepper_Direction_t direction)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->set_direction == 0)) {
         return;
     }
@@ -544,7 +569,10 @@ void Stepper_SetDirection(Stepper_MotorId_t motorId,
 
 void Stepper_ToggleDirection(Stepper_MotorId_t motorId)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->toggle_direction == 0)) {
         return;
     }
@@ -553,7 +581,10 @@ void Stepper_ToggleDirection(Stepper_MotorId_t motorId)
 
 bool Stepper_SetFrequency(Stepper_MotorId_t motorId, uint32_t frequencyHz)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return false;
+    }
     if ((dev->ops == 0) || (dev->ops->set_frequency == 0)) {
         return false;
     }
@@ -562,7 +593,10 @@ bool Stepper_SetFrequency(Stepper_MotorId_t motorId, uint32_t frequencyHz)
 
 bool Stepper_SetPulseWidthUs(Stepper_MotorId_t motorId, uint32_t pulseWidthUs)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return false;
+    }
     if ((dev->ops == 0) || (dev->ops->set_pulse_width_us == 0)) {
         return false;
     }
@@ -571,7 +605,10 @@ bool Stepper_SetPulseWidthUs(Stepper_MotorId_t motorId, uint32_t pulseWidthUs)
 
 void Stepper_Start(Stepper_MotorId_t motorId)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->start == 0)) {
         return;
     }
@@ -580,7 +617,10 @@ void Stepper_Start(Stepper_MotorId_t motorId)
 
 void Stepper_Stop(Stepper_MotorId_t motorId)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return;
+    }
     if ((dev->ops == 0) || (dev->ops->stop == 0)) {
         return;
     }
@@ -622,7 +662,10 @@ void Stepper_Service1ms(void)
 
 const Stepper_MotorState_t *Stepper_GetState(Stepper_MotorId_t motorId)
 {
-    stepper_t *dev = &g_stepper_devices[motorId];
+    stepper_t *dev = Stepper_GetDevice(motorId);
+    if (dev == 0) {
+        return 0;
+    }
     if ((dev->ops == 0) || (dev->ops->get_state == 0)) {
         return 0;
     }

@@ -5,6 +5,21 @@
 #include <stdint.h>
 #include "stm32f4xx_hal.h"
 
+#if defined(HAL_I2C_MODULE_ENABLED) && defined(__has_include)
+#if __has_include("stm32f4xx_hal_i2c.h")
+#include "stm32f4xx_hal_i2c.h"
+#define HAL_IIC_STM32_HAS_I2C          (1U)
+#endif
+#endif
+
+#ifndef HAL_IIC_STM32_HAS_I2C
+#define HAL_IIC_STM32_HAS_I2C          (0U)
+#endif
+
+#if (HAL_IIC_STM32_HAS_I2C == 0U)
+typedef void I2C_HandleTypeDef;
+#endif
+
 /* BSP IIC 传输模式定义值：轮询模式。 */
 #define HAL_IIC_TRANSFER_MODE_POLL      (0U)
 
