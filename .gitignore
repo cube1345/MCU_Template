@@ -1,0 +1,47 @@
+# Build output
+build/
+cmake-build-*/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Testing/
+
+# Firmware binaries and maps
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.lst
+*.o
+*.obj
+*.d
+
+# STM32CubeIDE / local metadata
+.settings/
+mx.scratch/
+
+# Editor and local tooling
+.vscode/
+.idea/
+.clangd
+*.code-workspace
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

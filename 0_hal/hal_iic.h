@@ -1,0 +1,116 @@
+#ifndef __HAL_IIC_H
+#define __HAL_IIC_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "stm32f4xx_hal.h"
+
+#if defined(HAL_I2C_MODULE_ENABLED) && defined(__has_include)
+#if __has_include("stm32f4xx_hal_i2c.h")
+#include "stm32f4xx_hal_i2c.h"
+#define HAL_IIC_STM32_HAS_I2C          (1U)
+#endif
+#endif
+
+#ifndef HAL_IIC_STM32_HAS_I2C
+#define HAL_IIC_STM32_HAS_I2C          (0U)
+#endif
+
+#if (HAL_IIC_STM32_HAS_I2C == 0U)
+typedef void I2C_HandleTypeDef;
+#endif
+
+/* BSP IIC 传输模式定义值：轮询模式。 */
+#define HAL_IIC_TRANSFER_MODE_POLL      (0U)
+
+/* BSP IIC 传输模式定义值：中断模式。 */
+#define HAL_IIC_TRANSFER_MODE_IRQ       (1U)
+
+/*
+ * BSP IIC 当前传输模式选择宏。
+ * STM32 当前实现使用阻塞式 HAL I2C API；该宏保留给上层兼容。
+ */
+#ifndef HAL_IIC_TRANSFER_MODE
+#define HAL_IIC_TRANSFER_MODE           HAL_IIC_TRANSFER_MODE_IRQ
+#endif
+
+/* 寄存器读链路强制轮询开关，STM32 当前实现中保留给上层兼容。 */
+#ifndef HAL_IIC_FORCE_POLL_REG_READ
+#define HAL_IIC_FORCE_POLL_REG_READ     (0U)
+#endif
+
+/**
+  * @brief  BSP IIC 端口编号定义，用于统一选择 CubeMX 已初始化的硬件 I2C 控制器。
+  */
+typedef enum
+{
+    HAL_IIC_PORT_0 = 0U,
+    HAL_IIC_PORT_1 = 1U
+} hal_iic_port_t;
+
+/**
+  * @brief  BSP IIC 接口返回状态定义，用于上层统一判断传输结果。
+  */
+typedef enum
+{
+    HAL_IIC_STATUS_OK = 0U,
+    HAL_IIC_STATUS_ERROR_PARAM,
+    HAL_IIC_STATUS_ERROR_TIMEOUT,
+    HAL_IIC_STATUS_ERROR_BUSY,
+    HAL_IIC_STATUS_ERROR_NACK,
+    HAL_IIC_STATUS_ERROR_ARB_LOST,
+    HAL_IIC_STATUS_ERROR_TRANSFER
+} hal_iic_status_t;
+
+typedef struct
+{
+    uint16_t transfer_length;
+    uint8_t last_stage;
+    uint8_t finish_stage;
+    uint32_t last_irq_iidx;
+    uint32_t last_controller_status;
+    uint32_t finish_controller_status;
+    uint32_t last_raw_interrupt_status;
+    uint32_t finish_raw_interrupt_status;
+    uint32_t rxfifo_trigger_count;
+    uint32_t rxdone_count;
+    uint32_t wait_notify_value;
+    uint32_t wait_rtos_ticks;
+    uint32_t finish_rtos_tick;
+    uint32_t wake_lag_rtos_ticks;
+    uint32_t result_code;
+    uint8_t completed_by_timeout;
+    uint32_t wait_bus_us;
+    uint32_t wait_idle_us;
+    uint32_t clear_us;
+    uint32_t prepare_us;
+    uint32_t wait_us;
+    uint32_t poll_tx_us;
+    uint32_t poll_rx_us;
+    uint32_t poll_tail_us;
+    uint32_t total_us;
+} hal_iic_profile_t;
+
+/* BSP IIC 初始化与状态接口。 */
+void hal_iic_init(void);
+uint32_t hal_iic_get_bus_speed_hz(hal_iic_port_t iic_port);
+const hal_iic_profile_t *hal_iic_get_profile(hal_iic_port_t iic_port);
+
+/* BSP IIC 基础设备访问接口。 */
+hal_iic_status_t hal_iic_check_device(hal_iic_port_t iic_port, uint8_t device_addr);
+hal_iic_status_t hal_iic_write_bytes(hal_iic_port_t iic_port, uint8_t device_addr,
+    const uint8_t *write_data, uint16_t write_length);
+hal_iic_status_t hal_iic_read_bytes(hal_iic_port_t iic_port, uint8_t device_addr,
+    uint8_t *read_data, uint16_t read_length);
+
+/* BSP IIC 8 位寄存器访问接口。 */
+hal_iic_status_t hal_iic_write_reg8(hal_iic_port_t iic_port, uint8_t device_addr,
+    uint8_t reg_addr, uint8_t reg_data);
+hal_iic_status_t hal_iic_read_reg8(hal_iic_port_t iic_port, uint8_t device_addr,
+    uint8_t reg_addr, uint8_t *reg_data);
+hal_iic_status_t hal_iic_write_reg8s(hal_iic_port_t iic_port, uint8_t device_addr,
+    uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
+hal_iic_status_t hal_iic_read_reg8s(hal_iic_port_t iic_port, uint8_t device_addr,
+    uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
+
+#endif
