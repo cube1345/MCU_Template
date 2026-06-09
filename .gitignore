@@ -1,0 +1,60 @@
+# Build outputs
+build/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.ninja
+.ninja_*
+
+# Firmware artifacts
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.su
+*.o
+*.obj
+*.d
+*.a
+
+# IDE and local workspace state
+.settings/
+.metadata/
+.idea/
+.vs/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+*.uvguix.*
+*.uvoptx
+*.scvd
+*.dep
+*.bak
+*.tmp
+*.swp
+
+# STM32CubeMX scratch and generated local cache
+mx.scratch/
+*.ioc.bak
+
+# Logs and debug helper output
+*.log
+*.jlink
+JLinkLog.txt
+JLinkSettings.ini
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Exclude IDE and editor configuration directories
+.settings/
+.vscode/
