@@ -1,6 +1,6 @@
 # 外部资料审阅与 MCU_Template 架构建议
 
-> 审阅日期：2026-07-29  
+> 审阅日期：2026-07-29
 > 范围：`E:\EmbeddedDevelopment\Resource\zhaoming_embedded-master\zhaoming_embedded-master`；仅审阅与建议，未改动项目源代码。
 
 ## 结论

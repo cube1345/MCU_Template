@@ -1056,6 +1056,11 @@
               <FilePath>..\4_facade\led_facade.c</FilePath>
             </File>
             <File>
+              <FileName>motor_facade.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\4_facade\motor_facade.c</FilePath>
+            </File>
+            <File>
               <FileName>uart_facade.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\4_facade\uart_facade.h</FilePath>

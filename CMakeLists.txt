@@ -59,3 +59,15 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/Mid/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/Mid/portable"
     "${CMAKE_CURRENT_SOURCE_DIR}/Mid/source")
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(motor_device_test
+        tests/motor_device_test.c
+        2_device/motor_driver.c)
+    target_include_directories(motor_device_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/1_core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/2_device")
+    add_test(NAME motor_device_test COMMAND motor_device_test)
+endif()

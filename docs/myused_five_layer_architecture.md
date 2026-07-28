@@ -716,7 +716,8 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 - 封装启动死区处理；
 - 封装 PWM 限幅；
 - 封装速度 PI 计算；
-- 保留 `Motor_Init()`、`Set_PWM()`、`Velocity_A()`、`Velocity_B()` 等旧接口。
+- 通过 `motor_channel_port_t` 注入 PWM `start`、`stop`、`set_pwm` 策略；
+- 不依赖 Board、SysConfig 宏或 `DL_*`。
 
 ### Board 层
 
@@ -727,8 +728,21 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 提供电机板级初始化入口；
-- 后续可进一步将 PWM Timer/Channel 绑定从 Device 默认配置中迁入 Board 层。
+- 提供电机板级初始化入口和默认实例；
+- 持有 PWM Timer/Channel、周期和 H-bridge 极性；
+- 将 TimerG 操作封装为 `motor_channel_port_t`，通过 `HAL_TimerG_*` 注入 Device。
+
+### Facade 层
+
+文件：
+
+- `4_facade/motor_facade.h`
+- `4_facade/motor_facade.c`
+
+职责：
+
+- 保留 `Motor_Init()`、`Set_PWM()`、`Velocity_A()`、`Velocity_B()` 等旧入口；
+- 获取默认 Board 实例并转发到 Device 对象 API。
 
 ---
 
@@ -855,10 +869,12 @@ GPIO 中断 GROUP1_IRQHandler
 
 ```text
 业务层 Set_PWM(left, right)
-    -> Device 兼容 API
-        -> Motor_SetPwmDevice(&g_default_motor, left, right)
+    -> Facade 兼容 API
+        -> Board: Motor_Board_GetDefault()
+            -> Device: Motor_SetPwmDevice()
             -> deadzone / limit
-                -> DL_Timer_setCaptureCompareValue()
+                -> injected PWM port
+                    -> Board: HAL_TimerG_SetCCValue()
 ```
 
 ---
@@ -1569,10 +1585,9 @@ static inline int32_t limit_value(...);
 
 ### 待优化
 
-1. 将 Motor 的 PWM Timer/Channel 默认配置进一步迁移到 `motor_board.c`，让 Device 层更纯粹。
-2. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
-3. 对无实际实现的 Facade `.c` 文件（如 `icm42688_facade.c`），考虑清理或补充逻辑。
-4. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
+1. 逐步减少全局变量兼容接口，改为函数访问或对象访问。
+2. 对无实际实现的 Facade `.c` 文件（如 `icm42688_facade.c`），考虑清理或补充逻辑。
+3. 需要抽象多个显示后端时，再为 OLED/TFT 拆分 `text_ops`、`graphics_ops` 等专用显示能力接口。
 
 ---
 
