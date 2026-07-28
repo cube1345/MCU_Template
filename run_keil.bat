@@ -17,6 +17,7 @@ if not exist "%PROJECT_PATH%" (
 )
 
 echo [1/2] Clean building MSPM0G3507 firmware...
+if exist "%BUILD_LOG%" del /q "%BUILD_LOG%"
 "%KEIL_PATH%" -r "%PROJECT_PATH%" -j1 -o "%BUILD_LOG%"
 set "UV4_EXIT=%ERRORLEVEL%"
 
@@ -37,6 +38,7 @@ if not "%UV4_EXIT%"=="0" (
 
 if /I "%~1"=="flash" (
     echo [2/2] Flashing explicitly requested...
+    if exist "%BASE_DIR%flash_log.txt" del /q "%BASE_DIR%flash_log.txt"
     "%KEIL_PATH%" -f "%PROJECT_PATH%" -j1 -o "%BASE_DIR%flash_log.txt"
     if errorlevel 1 (
         echo [ERROR] Keil flash command failed. See %BASE_DIR%flash_log.txt

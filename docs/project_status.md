@@ -27,7 +27,8 @@ Strategy/Adapter 注入样板；下一轮继续按同一原则收敛剩余反向
 - UART ISR 与云台 legacy 测试仍有跨层和并发风险；先记录，后续独立重构，避免与
   Motor 改动混合。
 - 当前 UV4 CLI 会启动驻留 GUI 进程但不写入新日志；在此工具行为恢复前，完整 Keil
-  clean rebuild 不能作为本轮已通过的验证项。
+  clean rebuild 不能作为本轮已通过的验证项。`run_keil.bat` 已在启动前清除旧日志，
+  因此不会将历史构建结果误判为通过。
 
 ## 近期路线
 
