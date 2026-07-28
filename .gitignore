@@ -27,6 +27,8 @@ MDK-ARM/RTE/
 Objects/
 Listings/
 /build/
+/build_log.txt
+/flash_log.txt
 
 # ---- 其它 IDE 配置（看情况要不要）----
 .vscode/
