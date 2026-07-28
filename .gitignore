@@ -26,6 +26,7 @@ MDK-ARM/*/RTE/
 MDK-ARM/RTE/
 Objects/
 Listings/
+/build/
 
 # ---- 其它 IDE 配置（看情况要不要）----
 .vscode/

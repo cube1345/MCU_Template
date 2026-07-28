@@ -341,7 +341,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\source\third_party\CMSIS\Core\Include;..\source;..\1_core;..\2_device;..\3_board;..\4_facade;..\5_libs;..\0_hal;..\Mid;..\Mid\include;..\Mid\portable;..\Mid\source;..\..\msp_freertos_module;..\6_apps;..\..\2026secondrace</IncludePath>
+              <IncludePath>..;..\source\third_party\CMSIS\Core\Include;..\source;..\0_hal;..\1_core;..\2_device;..\3_board;..\4_facade;..\5_libs;..\6_apps;..\Mid;..\Mid\include;..\Mid\portable;..\Mid\source</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>

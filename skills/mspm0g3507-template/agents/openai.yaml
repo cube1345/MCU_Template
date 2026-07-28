@@ -1,0 +1,4 @@
+interface:
+  display_name: "MSPM0G3507 Template"
+  short_description: "Build and verify this MSPM0 firmware template."
+  default_prompt: "Build and validate the MSPM0G3507 template without flashing hardware."

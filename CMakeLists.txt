@@ -1,39 +1,61 @@
 cmake_minimum_required(VERSION 3.20)
-project(MSPM0G3507_Editor C ASM)
+project(MSPM0G3507_Template C)
 
-# 💡 核心：定义宏，解决 DL_UART_... 找不到定义的问题
-# 这些宏通常在 Keil 的 Options for Target -> C/C++ 选项卡中
-add_definitions(-D__MSPM0G3507__)
-add_definitions(-DMSPM0G3507)
+# Keil is the authoritative firmware build.  This target gives editors and
+# static tools the same, deliberately bounded source inventory.
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# 💡 核心：把所有包含路径写全
-# 注意：${CMAKE_CURRENT_SOURCE_DIR} 代表当前文件夹
-# 新架构路径优先放在旧路径之前，避免同名兼容壳覆盖 MyDevices 中的真实设备类头文件。
-include_directories(
-        "${CMAKE_CURRENT_SOURCE_DIR}/source/third_party/CMSIS/Core/Include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/source"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Mid"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Mid/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Mid/portable"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyApps"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyCore"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyPlatform"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyDevices"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyBoards"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyFacades"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyInts"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyDrivers"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyLibs"
-        "${CMAKE_CURRENT_SOURCE_DIR}/MyUsed/MyBSP"
-        "${CMAKE_CURRENT_SOURCE_DIR}/." # 包含根目录下的 ti_msp_dl_config.h
-)
+file(GLOB DRIVERLIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/ti/driverlib/*.c")
+file(GLOB FREERTOS_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/source/*.c")
+file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/0_hal/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/2_device/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/3_board/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/4_facade/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/5_libs/*.c")
 
-# 💡 核心：让 CLion 知道哪些文件需要索引
-file(GLOB_RECURSE SOURCES
-        "source/*.c"
-        "Mid/*.c"
-        "MyUsed/*.c"
-        "*.c"
-)
+set(FREERTOS_PORT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/portable/heap_4.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/portable/port.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/FreeRTOS_demo.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/my_freetros_lib.c")
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+# imu_app.c is intentionally excluded until its removed imu_int boundary is
+# restored.  The remaining app sources are the same examples compiled by Keil.
+set(APP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/6_apps/car_app.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/6_apps/usart_app.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/6_apps/xunji_app.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/6_apps/yuntai_app.c")
+
+add_executable(${PROJECT_NAME}
+    empty.c
+    ti_msp_dl_config.c
+    ${DRIVERLIB_SOURCES}
+    ${FREERTOS_SOURCES}
+    ${FREERTOS_PORT_SOURCES}
+    ${LAYER_SOURCES}
+    ${APP_SOURCES})
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    __MSPM0G3507__
+    MSPM0G3507)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/third_party/CMSIS/Core/Include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source"
+    "${CMAKE_CURRENT_SOURCE_DIR}/0_hal"
+    "${CMAKE_CURRENT_SOURCE_DIR}/1_core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/2_device"
+    "${CMAKE_CURRENT_SOURCE_DIR}/3_board"
+    "${CMAKE_CURRENT_SOURCE_DIR}/4_facade"
+    "${CMAKE_CURRENT_SOURCE_DIR}/5_libs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/6_apps"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/portable"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Mid/source")

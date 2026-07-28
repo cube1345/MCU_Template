@@ -1,61 +1,49 @@
 @echo off
-:: ✨ 每次运行前清空终端，保持清爽
-cls
-chcp 65001 >nul
+setlocal EnableExtensions
 
-:: 获取当前脚本所在的绝对路径
-set BASE_DIR=%~dp0
+set "BASE_DIR=%~dp0"
+set "KEIL_PATH=E:\EmbeddedDevelopment\SoftWare\Keil5\Keil5_Core\UV4\UV4.exe"
+set "PROJECT_PATH=%BASE_DIR%keil\MSPG3507_FreeRTOS.uvprojx"
+set "BUILD_LOG=%BASE_DIR%build_log.txt"
 
-:: ==========================================
-:: 🚀 阶段 1：Keil 编译 (TI MSPM0G3507)
-:: ==========================================
-echo 🚀 [1/2] 正在唤醒 Keil 编译 TI 工程...
-
-:: 1. Keil 软件路径
-set KEIL_PATH="D:\Keil_v5-537\UV4\UV4.exe"
-
-:: 2. 你的 MSPM0 工程路径
-set PROJECT_PATH="%BASE_DIR%keil\MSPG3507_FreeRTOS.uvprojx"
-
-:: 调用 Keil 进行后台编译 (-b 代表 Build)
-%KEIL_PATH% -b %PROJECT_PATH% -j0 -o "%BASE_DIR%build_log.txt"
-
-:: 打印编译日志
-IF EXIST "%BASE_DIR%build_log.txt" (
-    type "%BASE_DIR%build_log.txt"
-) ELSE (
-    echo ❌ 编译日志丢失，请检查工程名是否正确！
+if not exist "%KEIL_PATH%" (
+    echo [ERROR] UV4.exe was not found: %KEIL_PATH%
+    exit /b 1
 )
 
-:: 🎯 核心防骗机制：检查 Keil 的返回值 (0:无错误无警告, 1:有警告无错误, 2及以上:有错误)
-IF %ERRORLEVEL% GEQ 2 (
-    echo.
-    echo ❌ 编译失败，发现 Error！已取消烧录流程。
-    exit /b %ERRORLEVEL%
+if not exist "%PROJECT_PATH%" (
+    echo [ERROR] Keil project was not found: %PROJECT_PATH%
+    exit /b 1
 )
 
-echo.
-:: ==========================================
-:: ⚡ 阶段 2：Keil 极速烧录 (调用工程内置配置)
-:: ==========================================
-echo ⚡ [2/2] 正在呼叫 Keil 烧录 MSPM0 芯片...
+echo [1/2] Clean building MSPM0G3507 firmware...
+"%KEIL_PATH%" -r "%PROJECT_PATH%" -j1 -o "%BUILD_LOG%"
+set "UV4_EXIT=%ERRORLEVEL%"
 
-:: 调用 Keil 进行后台烧录 (-f 代表 Flash)
-%KEIL_PATH% -f %PROJECT_PATH% -j0 -o "%BASE_DIR%flash_log.txt"
-
-:: 打印烧录日志
-IF EXIST "%BASE_DIR%flash_log.txt" (
-    type "%BASE_DIR%flash_log.txt"
-) ELSE (
-    echo ❌ 烧录日志丢失！
+if not exist "%BUILD_LOG%" (
+    echo [ERROR] Build log was not created.
+    exit /b 1
 )
 
-:: 检查烧录结果
-IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ❌ 烧录失败！请检查 DAPLink 是否连接，或 Keil 工程里的 Debug 设置。
-    exit /b %ERRORLEVEL%
+findstr /C:"- 0 Error(s)" "%BUILD_LOG%" >nul
+if errorlevel 1 (
+    echo [ERROR] Keil reported compilation errors. See %BUILD_LOG%
+    exit /b 1
 )
 
-echo.
-echo 🎉 完美！TI MSPM0 编译与烧录一气呵成！板子已跑起！
+if not "%UV4_EXIT%"=="0" (
+    echo [WARN] UV4 returned %UV4_EXIT%, but the build log reports zero errors.
+)
+
+if /I "%~1"=="flash" (
+    echo [2/2] Flashing explicitly requested...
+    "%KEIL_PATH%" -f "%PROJECT_PATH%" -j1 -o "%BASE_DIR%flash_log.txt"
+    if errorlevel 1 (
+        echo [ERROR] Keil flash command failed. See %BASE_DIR%flash_log.txt
+        exit /b 1
+    )
+) else (
+    echo [2/2] Flash skipped. Use "run_keil.bat flash" only with connected hardware.
+)
+
+exit /b 0
