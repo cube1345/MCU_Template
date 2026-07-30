@@ -1,4 +1,0 @@
-interface:
-  display_name: "Embedded Hardware Debug"
-  short_description: "Diagnose embedded targets with probes and runtime evidence"
-  default_prompt: "Use $embedded-debug to diagnose this embedded firmware runtime or hardware issue safely."

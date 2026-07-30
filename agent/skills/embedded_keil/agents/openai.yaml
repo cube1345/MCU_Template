@@ -1,4 +1,0 @@
-interface:
-  display_name: "Keil Build & Flash"
-  short_description: "Safely build and flash Keil uVision firmware"
-  default_prompt: "Use $keil to build this Keil uVision firmware project and verify its output."

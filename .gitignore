@@ -23,3 +23,7 @@ __pycache__/
 # 串口助手运行日志、端口配置和本机快捷方式。
 tool/serialmonitor/runtime/
 tool/serialmonitor/*.lnk
+
+# Local agent instructions, references, task files, and developer tools.
+agent/
+tool/

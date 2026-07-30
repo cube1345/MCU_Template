@@ -1,4 +1,0 @@
-interface:
-  display_name: "VSCode C Navigation"
-  short_description: "Repair C and embedded VSCode symbol navigation"
-  default_prompt: "Use $vscode-c-navigation to diagnose and repair declaration and definition navigation in this C project."

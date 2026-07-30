@@ -1,4 +1,0 @@
-interface:
-  display_name: "WEIXIN MCU Firmware"
-  short_description: "Write firmware compatible with WEIXIN Serial Monitor"
-  default_prompt: "Use $weixin-mcu-firmware to implement, adapt, review, or debug firmware against the active runtime protocol while preserving the real-hardware safety boundary."
