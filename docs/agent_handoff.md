@@ -90,8 +90,8 @@ layer/application/core/main.c
 | `key` | 2 | 每 10 ms 轮询 USER 按键；当前识别结果未被业务消费 |
 | `oled` | 1 | 延时 50 ms 后初始化 OLED，每秒显示递增计数 |
 | `motor` | 3 | 左右电机闭环控制，周期 5 ms，从原子邮箱消费目标速度 |
-| `emm_v5` | 1 | 延时 2 秒后启动 USART6 步进电机，当前固定运行 60 RPM |
-| `tracking` | 1 | 每 5 ms 用中间六路计算差速并发布左右轮目标，200 ms 打印状态 |
+| `emm_v5` | 1 | 延时 2 秒后使能驱动器，每 100 ms 查询实时位置 |
+| `tracking` | 1 | 每 5 ms 用八路输入计算差速并发布左右轮目标，200 ms 打印状态 |
 
 未启用或被链接裁剪：
 
@@ -156,22 +156,36 @@ layer/application/core/main.c
 - `drive.left_speed` 和 `drive.right_speed` 是循迹基础速度，默认均为
   `80000 count/s`；循迹任务叠加方向差速后发布最终目标。
 - 速度误差死区为 `±300 count/s`；死区内比例误差按零处理并暂停积分，但保留已有积分输出。
-- 中间六路 `io1..io6` 的左右位置权重为
-  `-5, -3, -1, 1, 3, 5`，输入 `0` 表示检测到黑线。
+- 八路 `io0..io7` 的左右位置权重为
+  `-15, -10, -5, -3, 3, 5, 10, 15`，输入 `0` 表示检测到黑线。
+- 原始位置误差使用系数为 `0.03125` 的 Q8 定点一阶低通滤波，首次识别
+  黑线时直接初始化；全白宽限期内继续使用最后一次原始权重运行滤波。
+- 滤波后误差进入 `±2` 死区时差速置零；越过边界后仅用超出死区的
+  误差计算差速，避免差速在边界处突变。
 - 差速增益为每个误差单位 `4000 count/s`。基础速度均为 `80000`
   时，最终目标为 `left=80000+differential`、
   `right=80000-differential`，两轮平均速度保持 `80000 count/s`。
-- 六路全黑按路口直行处理；短时丢线保留最后方向，连续丢线达到
-  `100 ms` 后发布 `0,0` 停车；启动后尚未检测到线时也保持停车。
+- 八路全黑时将原始误差置零并经滤波逐步回正；短时丢线保留最后方向，
+  八路连续全白达到真实 `300 ms` 后发布 `0,0` 停车；丢线时间使用
+  FreeRTOS Tick 判断，不受任务追赶执行次数影响；启动后尚未检测到线时
+  也保持停车。
 - `motor_axis` 连续更新速度目标时保留 PI 积分，仅在切入速度模式时清零。
 - 电机方向、编码器方向、PI 参数和高速稳定性仍需要整车实测。
 
 ### 7.4 EMM V5
 
 - 使用 USART6 PC6/PC7，波特率 115200。
-- USART6 TX 使用 DMA2 Stream6/Channel5，但调用任务仍会等待 DMA 完成。
-- 当前 `response_required=false`，只证明帧已发送，不能证明驱动器接受命令。
-- 当前任务固定运行 60 RPM，与早期“循环加速再减速”需求不一致，修改前先确认用户当前意图。
+- USART6 TX 使用 DMA2 Stream6/Channel5，RX 使用逐字节中断环形缓冲；
+  协议任务仍同步等待 DMA 完成和完整应答。
+- 当前 `response_required=true`，驱动器菜单必须设为 `Response=Receive`；
+  每条控制命令校验地址、功能码、状态和固定 `0x6B` 校验字节。
+- 任务以 `100 ms` 周期发送 `0x36` 查询实时位置并打印 `position_raw`；
+  原始值每 `65536` 表示一圈。读取、校验或超时失败时立即停止并退出任务。
+- 使能后将当前机械位置清为软件 `0°`；这不是机械回零。任务读取
+  `emm.position_deg`，仅在目标变化时发送 `0xFD` 绝对位置命令。
+- 角度范围为 `-15°..15°`，按 1.8° 电机、16 细分换算为
+  `3200 pulse/rev`；`1°` 四舍五入为 `9` 个位置脉冲。
+- 当前任务不发送速度模式命令；位置运动只由上述参数变化触发。
 
 ### 7.5 I2C
 
@@ -230,6 +244,7 @@ system status
 | `drive.speed_ki` | 读写 | 0..10 |
 | `drive.left_speed` | 读写 | 左轮循迹基础速度，-200000..200000 count/s |
 | `drive.right_speed` | 读写 | 右轮循迹基础速度，-200000..200000 count/s |
+| `emm.position_deg` | 读写 | EMM绝对角度，-15..15度 |
 | `monitor.tx_errors` | 只读 | UART 最终发送失败次数 |
 | `monitor.rx_errors` | 只读 | UART 接收、队列或续接错误次数 |
 
@@ -292,7 +307,7 @@ VSCode 说明：
 6. I2C 中断能力接口不等于硬件链路已实现，使用前必须补齐 IRQ 和实测。
 7. 实际运行时钟代码使用 HSI + PLL 168 MHz，而 `empty.ioc` 中仍包含 HSE/LSE 配置。修改时钟前先统一设计意图。
 8. 电机闭环输出限幅为 800/1000，对应 PWM 满量程的 80%；运行前必须确认供电、机械负载和急停条件。
-9. USART6 EMM V5 当前不校验设备应答。
+9. USART6 EMM V5 已启用控制应答校验，硬件仍需验证 RX 接线及菜单设置。
 10. 不要同时启用独立编码器任务和闭环电机任务。
 
 ## 12. 下一位 Agent 的建议起步顺序
@@ -317,7 +332,7 @@ VSCode 说明：
 | `layer/application/core/app_serial_monitor.c` | USART1 队列接收、参数表、自定义命令 |
 | `layer/application/core/app_system_stats.c` | 按需系统状态报告 |
 | `layer/application/core/app_motor.c` | 当前双电机闭环业务 |
-| `layer/application/core/app_tracking.c` | 中间六路循迹差速计算与目标发布任务 |
+| `layer/application/core/app_tracking.c` | 八路循迹差速计算与目标发布任务 |
 | `layer/component/motor_axis/` | 电机、编码器、PI 和滤波组合 |
 | `layer/component/tracking/` | 八路循迹数字输入采样组件 |
 | `layer/board/stm32f407/drive/board_drive.c` | 双电机和编码器资源绑定 |

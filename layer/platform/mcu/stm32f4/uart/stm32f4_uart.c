@@ -3,7 +3,7 @@
  * @brief   STM32F4 HAL UART 固定接收能力实现。
  * @author  weixin
  *
- * uart 是应用层唯一可见的基础对象。USART1 阻塞接口内部使用中断环形缓冲
+ * uart 是应用层唯一可见的基础对象。阻塞读取接口内部使用中断环形缓冲
  * 防止任务抢占造成丢字节；应用层不接触任何 STM32F4 具体类型。
  *
  * HAL 句柄、引脚复用表、GPIO/USART 时钟和 NVIC 都封装在本文件内。Board
@@ -27,8 +27,12 @@
 #define STM32F4_UART_SIGNAL_TX INT32_C(0)
 #define STM32F4_UART_SIGNAL_RX INT32_C(1)
 
-/* USART1 阻塞接口内部使用的中断接收环形缓冲区容量。 */
+/* 阻塞接口内部使用的中断接收环形缓冲区容量。 */
 #define STM32F4_UART_RX_RING_CAPACITY UINT16_C(128)
+/* HAL UART 中与接收链相关的错误位。 */
+#define STM32F4_UART_RX_ERROR_MASK \
+  (HAL_UART_ERROR_PE | HAL_UART_ERROR_NE | \
+   HAL_UART_ERROR_FE | HAL_UART_ERROR_ORE)
 
 /*
  * 一条记录描述一个 UART 信号能够复用到哪个 MCU 引脚。
@@ -54,7 +58,7 @@ struct stm32f4_uart_blocking {
   volatile bool tx_dma_active;
   /* USART6 DMA 或 UART 发送异常时置位，由任务侧发送函数读取。 */
   volatile bool tx_dma_error;
-  /* USART1 中断每次接收一个字节时使用的临时存储。 */
+  /* 中断每次接收一个字节时使用的临时存储。 */
   uint8_t rx_byte;
   /* 中断生产、任务消费的接收环形缓冲区。 */
   uint8_t rx_ring[STM32F4_UART_RX_RING_CAPACITY];
@@ -64,9 +68,9 @@ struct stm32f4_uart_blocking {
   volatile uint16_t rx_tail;
   /* 接收错误或缓冲区溢出后置位，由任务读取并清除。 */
   volatile bool rx_error;
-  /* 错误后丢弃当前残缺命令，直到收到行结束符。 */
+  /* 文本协议错误后丢弃当前残缺命令，直到收到行结束符。 */
   volatile bool rx_discarding;
-  /* true 表示 USART1 中断接收链已经启动。 */
+  /* true 表示连续中断接收链已经启动。 */
   volatile bool rx_irq_active;
 };
 
@@ -465,18 +469,14 @@ static int stm32f4_uart_hardware_stop(
 }
 
 /**
- * @brief  启动 USART1 阻塞对象内部的连续中断接收链。
+ * @brief  启动阻塞对象内部的连续中断接收链。
  * @param  self STM32F4 阻塞 UART 具体对象。
  * @return PLATFORM_OK 表示接收链启动成功，其他 PLATFORM_* 表示失败。
- * @note   USART6 保持 HAL 阻塞接收，不创建环形缓冲接收链。
+ * @note   每次接收一个字节，并由完成回调持续续接下一次接收。
  */
 static int stm32f4_uart_blocking_rx_start(
     struct stm32f4_uart_blocking *self)
 {
-  if (self->config->id != STM32F4_UART1) {
-    return PLATFORM_OK;
-  }
-
   self->rx_head = 0U;
   self->rx_tail = 0U;
   self->rx_error = false;
@@ -493,7 +493,7 @@ static int stm32f4_uart_blocking_rx_start(
 }
 
 /**
- * @brief  从 USART1 中断接收环形缓冲区取出一个字节。
+ * @brief  从中断接收环形缓冲区取出一个字节。
  * @param  self STM32F4 阻塞 UART 具体对象。
  * @param  byte 用于接收字节的变量。
  * @return true 表示成功取出字节，false 表示缓冲区为空。
@@ -523,7 +523,7 @@ static bool stm32f4_uart_blocking_rx_pop(
 }
 
 /**
- * @brief  从 USART1 中断环形缓冲区阻塞读取指定数量字节。
+ * @brief  从中断环形缓冲区阻塞读取指定数量字节。
  * @param  self STM32F4 阻塞 UART 具体对象。
  * @param  data 接收缓冲区。
  * @param  size 期望读取的字节数。
@@ -563,12 +563,13 @@ static int stm32f4_uart_blocking_ring_read(
  * @param  base UART 基础对象。
  * @retval PLATFORM_OK：启动成功。
  * @retval 其他 PLATFORM_ERR_*：参数、上下文、资源或硬件启动失败。
- * @note   USART1 启动中断接收环；USART6 启动发送 DMA。
+ * @note   两个串口均启动中断接收环；USART6 另外启动发送 DMA。
  */
 static int stm32f4_uart_blocking_start(struct uart *base)
 {
   struct stm32f4_uart_blocking *self;
   bool hardware_started = false;
+  bool tx_dma_started = false;
   int result;
 
   if (base == NULL) {
@@ -589,11 +590,16 @@ static int stm32f4_uart_blocking_start(struct uart *base)
     hardware_started = true;
     if (self->config->id == STM32F4_UART6) {
       result = stm32f4_uart6_tx_dma_start(self);
-    } else {
+      tx_dma_started = (result == PLATFORM_OK);
+    }
+    if (result == PLATFORM_OK) {
       result = stm32f4_uart_blocking_rx_start(self);
     }
   }
   if (result != PLATFORM_OK) {
+    if (tx_dma_started) {
+      (void)stm32f4_uart6_tx_dma_stop(self);
+    }
     if (hardware_started) {
       (void)stm32f4_uart_hardware_stop(&self->handle,
                                        self->config,
@@ -700,7 +706,7 @@ static int stm32f4_uart_blocking_write(
  * @param  size 期望接收字节数。
  * @param  timeout_ms 阻塞接收超时时间，单位 ms。
  * @return PLATFORM_OK 表示接收成功；其他值表示参数、上下文或 HAL 错误。
- * @note   该函数会阻塞等待接收完成，不允许在 ISR 上下文调用。
+ * @note   数据由中断写入环形缓冲，本函数等待并消费固定长度数据。
  */
 static int stm32f4_uart_blocking_read(
     struct uart *base,
@@ -717,12 +723,8 @@ static int stm32f4_uart_blocking_read(
     return PLATFORM_ERR_ISR_CONTEXT;
   }
   self = container_of(base, struct stm32f4_uart_blocking, base);
-  if (self->config->id == STM32F4_UART1) {
-    return stm32f4_uart_blocking_ring_read(self, data, size,
-                                           timeout_ms);
-  }
-  return stm32f4_uart_result(
-      HAL_UART_Receive(&self->handle, data, size, timeout_ms));
+  return stm32f4_uart_blocking_ring_read(self, data, size,
+                                         timeout_ms);
 }
 
 /**
@@ -926,10 +928,10 @@ struct uart *stm32f4_uart_interrupt_create(
 }
 
 /**
- * @brief  保存 USART1 阻塞对象收到的一个字节并继续下一字节接收。
+ * @brief  保存阻塞对象收到的一个字节并继续下一字节接收。
  * @param  self STM32F4 阻塞 UART 具体对象。
  * @return 无返回值。
- * @note   本函数在 USART1 中断回调上下文执行，只维护固定环形缓冲区。
+ * @note   USART1 按文本帧恢复，USART6 按二进制帧立即清空恢复。
  */
 static void stm32f4_uart_blocking_rx_complete(
     struct stm32f4_uart_blocking *self)
@@ -950,11 +952,12 @@ static void stm32f4_uart_blocking_rx_complete(
       next_head = 0U;
     }
     if (next_head == self->rx_tail) {
-      /* 缓冲区满时丢弃当前残缺行，防止后续字符被误解析成新命令。 */
+      /* 溢出后清空残帧；文本串口继续丢弃到下一行结束符。 */
       self->rx_head = 0U;
       self->rx_tail = 0U;
       self->rx_error = true;
-      self->rx_discarding = true;
+      self->rx_discarding =
+          (self->config->id == STM32F4_UART1);
     } else {
       self->rx_ring[self->rx_head] = self->rx_byte;
       self->rx_head = next_head;
@@ -970,10 +973,10 @@ static void stm32f4_uart_blocking_rx_complete(
 }
 
 /**
- * @brief  从 USART1 阻塞对象接收错误中恢复连续中断接收。
+ * @brief  从阻塞对象接收错误中恢复连续中断接收。
  * @param  self STM32F4 阻塞 UART 具体对象。
  * @return 无返回值。
- * @note   当前残缺行会被丢弃到行结束，任务随后收到一次 IO 错误并重置解析器。
+ * @note   USART1 丢弃残行；USART6 清空二进制残帧后立即接收新帧。
  */
 static void stm32f4_uart_blocking_rx_recover(
     struct stm32f4_uart_blocking *self)
@@ -981,7 +984,13 @@ static void stm32f4_uart_blocking_rx_recover(
   self->rx_head = 0U;
   self->rx_tail = 0U;
   self->rx_error = true;
-  self->rx_discarding = true;
+  self->rx_discarding =
+      (self->config->id == STM32F4_UART1);
+  self->rx_irq_active = false;
+  if (HAL_UART_AbortReceive(&self->handle) != HAL_OK) {
+    return;
+  }
+  self->rx_irq_active = true;
   if (HAL_UART_Receive_IT(&self->handle,
                           &self->rx_byte,
                           UINT16_C(1)) != HAL_OK) {
@@ -1065,7 +1074,7 @@ static void stm32f4_uart_interrupt_rx_finish(int result)
  * @brief  HAL UART 接收完成回调。
  * @param  handle HAL 传入的 UART 句柄。
  * @return 无。
- * @note   该函数由 HAL 中断处理流程调用，只处理本模块持有的 USART1 句柄。
+ * @note   由 HAL 中断流程调用，并续接阻塞对象的连续接收链。
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
 {
@@ -1073,6 +1082,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
     stm32f4_uart_blocking_rx_complete(&g_uart1_blocking);
   } else if (handle == &g_uart1_interrupt.handle) {
     stm32f4_uart_interrupt_rx_finish(PLATFORM_OK);
+  } else if (handle == &g_uart6_blocking.handle) {
+    stm32f4_uart_blocking_rx_complete(&g_uart6_blocking);
   }
 }
 
@@ -1097,12 +1108,21 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *handle)
  */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *handle)
 {
+  uint32_t error_code;
+
   if (handle == &g_uart1_blocking.handle) {
     stm32f4_uart_blocking_rx_recover(&g_uart1_blocking);
   } else if (handle == &g_uart1_interrupt.handle) {
     stm32f4_uart_interrupt_rx_finish(PLATFORM_ERR_IO);
   } else if (handle == &g_uart6_blocking.handle) {
-    g_uart6_blocking.tx_dma_error = true;
-    g_uart6_blocking.tx_dma_active = false;
+    error_code = handle->ErrorCode;
+    if (g_uart6_blocking.tx_dma_active &&
+        ((error_code & HAL_UART_ERROR_DMA) != 0U)) {
+      g_uart6_blocking.tx_dma_error = true;
+      g_uart6_blocking.tx_dma_active = false;
+    }
+    if ((error_code & STM32F4_UART_RX_ERROR_MASK) != 0U) {
+      stm32f4_uart_blocking_rx_recover(&g_uart6_blocking);
+    }
   }
 }

@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /* 板载EMM V5电机的串口设备地址。 */
 #define BOARD_EMM_V5_ADDRESS UINT8_C(1)
@@ -21,6 +22,9 @@
 #define BOARD_EMM_V5_ACCELERATION UINT8_C(0)
 /* EMM V5命令发送和四字节应答接收的单次超时，单位为ms。 */
 #define BOARD_EMM_V5_TIMEOUT_MS UINT32_C(500)
+/* 1.8度电机、16细分时，位置命令每圈需要3200个脉冲。 */
+#define BOARD_EMM_V5_PULSES_PER_REVOLUTION (3200.0F)
+#define BOARD_EMM_V5_DEGREES_PER_REVOLUTION (360.0F)
 
 /* 板级静态EMM V5具体对象，其生命周期覆盖整个固件运行期。 */
 static struct emm_v5 s_emm_v5;
@@ -40,8 +44,8 @@ int board_emm_v5_init(void)
     .position_speed_rpm = BOARD_EMM_V5_POSITION_SPEED_RPM,
     .acceleration = BOARD_EMM_V5_ACCELERATION,
     .timeout_ms = BOARD_EMM_V5_TIMEOUT_MS,
-    /* 当前驱动器未返回控制命令应答，按官方上位机的只发送模式运行。 */
-    .response_required = false,
+    /* 驱动器菜单需设为 Response=Receive，以校验每条控制命令应答。 */
+    .response_required = true,
     .reversed = false,
   };
   struct uart *uart;
@@ -72,4 +76,47 @@ int board_emm_v5_init(void)
 struct motor *board_emm_v5_get(void)
 {
   return s_emm_v5_bound ? emm_v5_get_motor(&s_emm_v5) : NULL;
+}
+
+/**
+ * @brief  通过USART6读取板载EMM V5的实时位置。
+ * @param  position_raw 用于接收实时位置原始值的变量。
+ * @retval PLATFORM_OK表示读取成功，其他PLATFORM_*表示状态或通信错误。
+ * @note   原始位置每65536单位表示电机旋转一圈，仅由EMM任务调用。
+ */
+int board_emm_v5_position_read(int32_t *position_raw)
+{
+  if (!s_emm_v5_bound) {
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+  return emm_v5_read_position(&s_emm_v5, position_raw);
+}
+
+int board_emm_v5_position_clear(void)
+{
+  if (!s_emm_v5_bound) {
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+  return emm_v5_position_clear(&s_emm_v5);
+}
+
+int board_emm_v5_position_deg_set(float position_deg)
+{
+  float pulse_value;
+  int32_t pulse;
+
+  if ((position_deg != position_deg) ||
+      (position_deg < BOARD_EMM_V5_POSITION_DEG_MIN) ||
+      (position_deg > BOARD_EMM_V5_POSITION_DEG_MAX)) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  if (!s_emm_v5_bound) {
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+
+  pulse_value = position_deg * BOARD_EMM_V5_PULSES_PER_REVOLUTION /
+                BOARD_EMM_V5_DEGREES_PER_REVOLUTION;
+  pulse = (int32_t)(pulse_value >= 0.0F ?
+                    pulse_value + 0.5F : pulse_value - 0.5F);
+  return emm_v5_move_absolute(&s_emm_v5, pulse);
 }

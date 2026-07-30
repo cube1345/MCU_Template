@@ -87,11 +87,38 @@ int emm_v5_set_speed_rpm(struct emm_v5 *self, int32_t speed_rpm);
 int emm_v5_move_relative(struct emm_v5 *self, int32_t pulse);
 
 /**
+ * @brief  以标准位置模式移动到绝对脉冲位置。
+ * @param  self 已启动的EMM V5对象。
+ * @param  pulse 相对驱动器零点的有符号绝对脉冲位置。
+ * @retval PLATFORM_OK表示命令发送成功，其他值表示状态或通信错误。
+ * @note   正负方向受reversed配置影响。
+ */
+int emm_v5_move_absolute(struct emm_v5 *self, int32_t pulse);
+
+/**
+ * @brief  将EMM V5当前位置设置为驱动器零点。
+ * @param  self 已启动的EMM V5对象。
+ * @retval PLATFORM_OK表示清零成功，其他值表示状态或通信错误。
+ * @note   本命令不执行机械回零，仅重定义当前位置坐标。
+ */
+int emm_v5_position_clear(struct emm_v5 *self);
+
+/**
  * @brief  立即停止EMM V5当前运动。
  * @param  self 已启动的EMM V5对象。
  * @retval PLATFORM_OK表示停止命令发送成功，其他PLATFORM_*表示状态或通信错误。
  * @note   本函数只发送协议停止帧；UART生命周期由Board层统一维护。
  */
 int emm_v5_stop_now(struct emm_v5 *self);
+
+/**
+ * @brief  通过串口读取EMM V5编码器实时位置。
+ * @param  self 已启动的EMM V5对象。
+ * @param  position_raw 用于接收实时位置原始值的变量。
+ * @retval PLATFORM_OK表示读取成功，其他PLATFORM_*表示状态或通信错误。
+ * @note   原始位置每65536单位表示电机旋转一圈，符号表示驱动器方向。
+ */
+int emm_v5_read_position(struct emm_v5 *self,
+                         int32_t *position_raw);
 
 #endif /* EMM_V5_H */

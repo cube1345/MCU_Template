@@ -53,14 +53,14 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 | PC7 | EMM V5 RX | USART6_RX | AF8 | 步进电机低速调速任务 | `board_uart.c` |
 | PD12 | 左编码器 A 相 | TIM4_CH1 | AF2，上拉输入 | 5 ms 速度闭环反馈 | `board_drive.c` |
 | PD13 | 左编码器 B 相 | TIM4_CH2 | AF2，上拉输入 | 5 ms 速度闭环反馈 | `board_drive.c` |
-| PD7 | 循迹输入 0（右排针 15） | GPIO | 上拉输入 | 5 ms 采样，不参与控制 | `board_tracking.c` |
-| PD5 | 循迹输入 1（右排针 14） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PD3 | 循迹输入 2（右排针 13） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PD1 | 循迹输入 3（右排针 12） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PC12 | 循迹输入 4（右排针 11） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PC10 | 循迹输入 5（右排针 10） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PA12 | 循迹输入 6（右排针 9） | GPIO | 上拉输入 | 5 ms 六路循迹控制 | `board_tracking.c` |
-| PA8 | 循迹输入 7（右排针 8） | GPIO | 上拉输入 | 5 ms 采样，不参与控制 | `board_tracking.c` |
+| PD7 | 循迹输入 0（右排针 15） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PD5 | 循迹输入 1（右排针 14） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PD3 | 循迹输入 2（右排针 13） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PD1 | 循迹输入 3（右排针 12） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PC12 | 循迹输入 4（右排针 11） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PC10 | 循迹输入 5（右排针 10） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PA12 | 循迹输入 6（右排针 9） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
+| PA8 | 循迹输入 7（右排针 8） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |
 
 说明：即使 PC5 当前没有有效输出，它已经被初始化为
 指定用途，仍应视为占用，不能交给其他模块。
@@ -94,7 +94,7 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 2. TIM3当前整体工作在右编码器模式，PB4上的TIM3_CH1调光PWM已停用，不能同时恢复。
 3. TIM2 的 CH1 至 CH4 共享同一个定时器频率，四路 PWM 不能分别设置不同频率；当前也不能再把 TIM2 配置为编码器模式。
 4. PC6/PC7 当前用于 USART6。新增 TIM3 等复用映射时必须避让。
-5. USART6 当前只创建阻塞 UART 对象；中断接收后端目前只支持 USART1。
+5. USART6 RX 使用逐字节中断环形缓冲，TX 使用 DMA2 Stream6/Channel5。
 6. OLED 当前使用 I2C1 的 PB6/PB7，不再使用 I2C2 的 PB10/PB11。
 7. USART6_TX 固定使用 DMA2 Stream6/Channel5；新增 DMA2 功能时必须避让。
 8. 右排针 15 至 8 号位已连续分配为八路循迹数字输入，通道顺序不得在应用层重复解释。

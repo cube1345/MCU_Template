@@ -12,6 +12,7 @@
 #include "app_system_stats.h"
 
 #include "board_drive.h"
+#include "emm_v5/board_emm_v5.h"
 #include "board_uart.h"
 #include "platform/inferface/uart/uart_interrupt.h"
 #include "result.h"
@@ -50,7 +51,7 @@
 #define SERIAL_MONITOR_DRIVE_SPEED_MAX INT32_C(200000)
 #endif
 /* 左右轮默认基础速度，保证默认平均目标速度为 80000 count/s。 */
-#define SERIAL_MONITOR_DRIVE_SPEED_DEFAULT INT32_C(80000)
+#define SERIAL_MONITOR_DRIVE_SPEED_DEFAULT INT32_C(60000)
 #if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
 /* WEIXIN 左右轮速度波形的发送周期，单位为毫秒。 */
 #define SERIAL_MONITOR_WAVE_PERIOD_MS UINT32_C(100)
@@ -73,6 +74,8 @@ static float s_drive_speed_ki = BOARD_DRIVE_SPEED_KI_DEFAULT;
 static int32_t s_drive_left_speed = SERIAL_MONITOR_DRIVE_SPEED_DEFAULT;
 /* 循迹任务读取的右轮基础速度，单位为编码器计数每秒。 */
 static int32_t s_drive_right_speed = SERIAL_MONITOR_DRIVE_SPEED_DEFAULT;
+/* 上位机请求的EMM绝对位置，单位为度。 */
+static float s_emm_position_deg;
 /* UART 发送最终失败次数，只由本任务更新。 */
 static uint32_t s_tx_error_count;
 /* UART 非超时接收失败次数，只由本任务更新。 */
@@ -155,6 +158,14 @@ static const struct weixin_param s_params[] = {
   },
 #endif
   {
+    .name = "emm.position_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_emm_position_deg,
+    .minimum = BOARD_EMM_V5_POSITION_DEG_MIN,
+    .maximum = BOARD_EMM_V5_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
     .name = "monitor.tx_errors",
     .type = WEIXIN_PARAM_TYPE_U32,
     .value = &s_tx_error_count,
@@ -210,6 +221,24 @@ int serial_monitor_drive_base_speeds_get(int32_t *left_speed,
   taskENTER_CRITICAL();
   *left_speed = s_drive_left_speed;
   *right_speed = s_drive_right_speed;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+/**
+ * @brief  获取上位机请求的EMM绝对位置快照。
+ * @param  position_deg 用于接收目标角度的变量。
+ * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
+ * @note   本函数只读取目标值，不访问EMM或USART6硬件。
+ */
+int serial_monitor_emm_position_deg_get(float *position_deg)
+{
+  if (position_deg == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+
+  taskENTER_CRITICAL();
+  *position_deg = s_emm_position_deg;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }

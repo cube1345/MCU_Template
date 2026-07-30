@@ -42,6 +42,14 @@ int serial_monitor_drive_speed_gains_get(float *speed_kp,
 int serial_monitor_drive_base_speeds_get(int32_t *left_speed,
                                          int32_t *right_speed);
 
+/**
+ * @brief  获取上位机请求的EMM绝对位置快照。
+ * @param  position_deg 用于接收目标角度的变量。
+ * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
+ * @note   单位为度；本函数不访问EMM或USART6硬件。
+ */
+int serial_monitor_emm_position_deg_get(float *position_deg);
+
 #if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
 /**
  * @brief  发布左右轮实测速度，供 WEIXIN 波形协议低频发送。

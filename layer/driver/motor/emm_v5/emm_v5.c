@@ -23,7 +23,10 @@
 #define EMM_V5_COMMAND_SPEED UINT8_C(0xF6)
 #define EMM_V5_COMMAND_POSITION UINT8_C(0xFD)
 #define EMM_V5_COMMAND_STOP_NOW UINT8_C(0xFE)
+#define EMM_V5_COMMAND_READ_POSITION UINT8_C(0x36)
+#define EMM_V5_COMMAND_CLEAR_POSITION UINT8_C(0x0A)
 #define EMM_V5_STOP_MAGIC UINT8_C(0x98)
+#define EMM_V5_CLEAR_POSITION_MAGIC UINT8_C(0x6D)
 /* EMM V5协议方向值：0为顺时针，1为逆时针。 */
 #define EMM_V5_DIRECTION_CW UINT8_C(0)
 #define EMM_V5_DIRECTION_CCW UINT8_C(1)
@@ -31,10 +34,15 @@
 #define EMM_V5_SYNC_DISABLED UINT8_C(0)
 /* 标准位置模式使用相对当前实时位置的运动语义。 */
 #define EMM_V5_POSITION_RELATIVE UINT8_C(0)
+#define EMM_V5_POSITION_ABSOLUTE UINT8_C(1)
 /* 控制动作命令固定返回四字节应答，状态0x02表示执行成功。 */
 #define EMM_V5_RESPONSE_SIZE UINT16_C(4)
 #define EMM_V5_RESPONSE_SUCCESS UINT8_C(0x02)
 #define EMM_V5_RESPONSE_CONDITION_FAILED UINT8_C(0xE2)
+/* 实时位置应答包含地址、功能码、符号、四字节位置和校验字节。 */
+#define EMM_V5_POSITION_RESPONSE_SIZE UINT16_C(8)
+#define EMM_V5_POSITION_SIGN_POSITIVE UINT8_C(0)
+#define EMM_V5_POSITION_SIGN_NEGATIVE UINT8_C(1)
 /* 每条EMM V5命令发送前的固定等待时间，单位为ms。 */
 #define EMM_V5_COMMAND_PRE_DELAY_MS UINT32_C(3)
 
@@ -290,7 +298,9 @@ int emm_v5_set_speed_rpm(struct emm_v5 *self, int32_t speed_rpm)
  * @param  pulse 有符号相对脉冲数，正负方向受reversed配置影响。
  * @retval PLATFORM_OK表示命令发送成功，其他PLATFORM_*表示状态或通信错误。
  */
-int emm_v5_move_relative(struct emm_v5 *self, int32_t pulse)
+static int emm_v5_move_position(struct emm_v5 *self,
+                                int32_t pulse,
+                                uint8_t position_mode)
 {
   uint8_t frame[13];
   uint8_t direction;
@@ -298,6 +308,10 @@ int emm_v5_move_relative(struct emm_v5 *self, int32_t pulse)
   bool ccw;
   int result;
 
+  if ((position_mode != EMM_V5_POSITION_RELATIVE) &&
+      (position_mode != EMM_V5_POSITION_ABSOLUTE)) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
   result = emm_v5_ready_check(self);
   if (result != PLATFORM_OK) {
     return result;
@@ -323,12 +337,42 @@ int emm_v5_move_relative(struct emm_v5 *self, int32_t pulse)
   frame[7] = (uint8_t)(magnitude >> 16);
   frame[8] = (uint8_t)(magnitude >> 8);
   frame[9] = (uint8_t)magnitude;
-  frame[10] = EMM_V5_POSITION_RELATIVE;
+  frame[10] = position_mode;
   frame[11] = EMM_V5_SYNC_DISABLED;
   frame[12] = EMM_V5_FRAME_CHECKSUM;
   result = emm_v5_exchange(self, frame, sizeof(frame));
   if (result == PLATFORM_OK) {
     self->commanded_position_pulse = pulse;
+  }
+  return result;
+}
+
+int emm_v5_move_relative(struct emm_v5 *self, int32_t pulse)
+{
+  return emm_v5_move_position(self, pulse, EMM_V5_POSITION_RELATIVE);
+}
+
+int emm_v5_move_absolute(struct emm_v5 *self, int32_t pulse)
+{
+  return emm_v5_move_position(self, pulse, EMM_V5_POSITION_ABSOLUTE);
+}
+
+int emm_v5_position_clear(struct emm_v5 *self)
+{
+  uint8_t frame[4];
+  int result;
+
+  result = emm_v5_ready_check(self);
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  frame[0] = self->config.address;
+  frame[1] = EMM_V5_COMMAND_CLEAR_POSITION;
+  frame[2] = EMM_V5_CLEAR_POSITION_MAGIC;
+  frame[3] = EMM_V5_FRAME_CHECKSUM;
+  result = emm_v5_exchange(self, frame, sizeof(frame));
+  if (result == PLATFORM_OK) {
+    self->commanded_position_pulse = 0;
   }
   return result;
 }
@@ -357,4 +401,69 @@ int emm_v5_stop_now(struct emm_v5 *self)
     self->commanded_speed_rpm = 0;
   }
   return result;
+}
+
+/**
+ * @brief  通过串口读取EMM V5编码器实时位置。
+ * @param  self 已启动的EMM V5对象。
+ * @param  position_raw 用于接收实时位置原始值的变量。
+ * @retval PLATFORM_OK表示读取成功，其他PLATFORM_*表示状态或通信错误。
+ * @note   原始位置每65536单位表示电机旋转一圈，符号表示驱动器方向。
+ */
+int emm_v5_read_position(struct emm_v5 *self,
+                         int32_t *position_raw)
+{
+  uint8_t frame[3];
+  uint8_t response[EMM_V5_POSITION_RESPONSE_SIZE];
+  uint32_t magnitude;
+  int result;
+
+  if (position_raw == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  result = emm_v5_ready_check(self);
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+
+  frame[0] = self->config.address;
+  frame[1] = EMM_V5_COMMAND_READ_POSITION;
+  frame[2] = EMM_V5_FRAME_CHECKSUM;
+  delay_ms(EMM_V5_COMMAND_PRE_DELAY_MS);
+  result = uart_write(self->uart, frame, sizeof(frame),
+                      self->config.timeout_ms);
+  if (result == PLATFORM_OK) {
+    result = uart_blocking_read(self->uart, response,
+                                EMM_V5_POSITION_RESPONSE_SIZE,
+                                self->config.timeout_ms);
+  }
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  if ((response[0] != self->config.address) ||
+      (response[1] != EMM_V5_COMMAND_READ_POSITION) ||
+      (response[7] != EMM_V5_FRAME_CHECKSUM)) {
+    return PLATFORM_ERR_IO;
+  }
+
+  magnitude = ((uint32_t)response[3] << 24U) |
+              ((uint32_t)response[4] << 16U) |
+              ((uint32_t)response[5] << 8U) |
+              (uint32_t)response[6];
+  if (response[2] == EMM_V5_POSITION_SIGN_POSITIVE) {
+    if (magnitude > (uint32_t)INT32_MAX) {
+      return PLATFORM_ERR_IO;
+    }
+    *position_raw = (int32_t)magnitude;
+  } else if (response[2] == EMM_V5_POSITION_SIGN_NEGATIVE) {
+    if (magnitude > ((uint32_t)INT32_MAX + UINT32_C(1))) {
+      return PLATFORM_ERR_IO;
+    }
+    *position_raw = (magnitude ==
+                     ((uint32_t)INT32_MAX + UINT32_C(1))) ?
+                    INT32_MIN : -(int32_t)magnitude;
+  } else {
+    return PLATFORM_ERR_IO;
+  }
+  return PLATFORM_OK;
 }

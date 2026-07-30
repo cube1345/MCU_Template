@@ -52,7 +52,7 @@ static const struct stm32f4_uart_config g_uart6_config = {
 
 static struct uart *g_uart1;
 static int32_t g_uart1_mode;
-/* USART6仅供外部电机驱动器使用，采用阻塞收发实现。 */
+/* USART6 使用 TX DMA 和 RX 中断环，协议任务同步读取完整应答。 */
 static struct uart *g_uart6;
 
 /**
@@ -112,7 +112,7 @@ struct uart *board_uart1_get(void)
 /**
  * @brief  初始化连接EMM V5驱动器的STM32F407板级USART6。
  * @retval PLATFORM_OK表示初始化成功或已经初始化，其他PLATFORM_*表示失败。
- * @note   USART6使用PC6/PC7、115200 baud和阻塞收发，不会绑定到printf。
+ * @note   USART6使用PC6/PC7、115200 baud和中断接收，不会绑定到printf。
  */
 int board_uart6_init(void)
 {
