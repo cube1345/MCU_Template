@@ -1,0 +1,25 @@
+# VSCode/CMake Tools 生成的索引缓存；可随时由默认构建任务重新生成。
+cmake-build-vscode/
+
+# VSCode C/C++ 扩展生成的本机索引数据库。
+.vscode/BROWSE.VC.DB*
+
+# 本地分析、渲染和临时构建目录。
+tmp/
+
+# 大体积硬件资料归档保留在本机，不纳入源码版本。
+agent/硬件资料/
+
+# Keil 编译输出、日志和用户界面状态。
+MDK-ARM/empty/
+MDK-ARM/*.log
+MDK-ARM/*.lst
+MDK-ARM/*.uvguix.*
+
+# Python 工具缓存。
+__pycache__/
+*.pyc
+
+# 串口助手运行日志、端口配置和本机快捷方式。
+tool/serialmonitor/runtime/
+tool/serialmonitor/*.lnk

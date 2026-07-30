@@ -1,0 +1,4 @@
+interface:
+  display_name: "WEIXIN Serial Diagnostics"
+  short_description: "Safely diagnose this project serial monitor."
+  default_prompt: "Use $weixin-serial-monitor to select the intended runtime, inspect the WEIXIN Serial Monitor safely, and distinguish accepted requests from completed diagnostics."

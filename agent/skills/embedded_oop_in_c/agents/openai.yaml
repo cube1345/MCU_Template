@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering OOP in C"
+  short_description: "MCU firmware architecture with selective OOP in C"
+  default_prompt: "Use $oop-in-c to design or review a production MCU C module with base/ops dispatch, CubeMX HAL integration, and board-level binding."
