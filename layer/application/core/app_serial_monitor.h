@@ -22,9 +22,9 @@
 #error "SERIAL_MONITOR_DRIVE_DEBUG_ENABLE must be 0 or 1"
 #endif
 
-/* Jetson报告速度、STM32估计速度及旧PID速度输出波形开关。 */
+/* 串级控制目标速度及STM32估计速度波形开关。 */
 #ifndef SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE
-#define SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE 0
+#define SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE 1
 #endif
 
 #if ((SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE != 0) && \
@@ -111,11 +111,15 @@ int serial_monitor_ball_target_x_get(int16_t *target_x);
 int serial_monitor_ball_target_x_set(int16_t target_x);
 
 /**
- * @brief  获取小球速度阻尼系数。
- * @param  velocity_damping 用于接收速度到反向制动角度的比例系数。
+ * @brief  获取小球速度内环PID增益。
+ * @param  velocity_kp 用于接收速度环比例增益。
+ * @param  velocity_ki 用于接收速度环积分增益。
+ * @param  velocity_kd 用于接收速度环微分增益。
  * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
  */
-int serial_monitor_ball_velocity_damping_get(float *velocity_damping);
+int serial_monitor_ball_velocity_gains_get(float *velocity_kp,
+                                           float *velocity_ki,
+                                           float *velocity_kd);
 
 /**
  * @brief  获取上位机配置的左右轮循迹基础速度快照。
@@ -149,22 +153,15 @@ void serial_monitor_drive_speeds_publish(int32_t left_speed,
 
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
 /**
- * @brief  发布小球原始速度与低通结果，供WEIXIN波形协议发送。
- * @param  velocity 小球原始速度，单位为像素每帧。
+ * @brief  发布位置外环目标速度与STM32估计速度，供WEIXIN波形协议发送。
+ * @param  target_velocity 位置外环目标速度，单位为像素每秒。
  * @param  filtered_velocity STM32估计并低通处理的速度，单位为像素每秒。
  * @retval None。
  * @note   本函数只更新内存快照，不访问USART1或USART6。
  */
-void serial_monitor_ball_velocities_publish(int8_t velocity,
+void serial_monitor_ball_velocities_publish(float target_velocity,
                                             float filtered_velocity);
 
-/**
- * @brief  发布球控PID写入EMM邮箱的整数目标速度，供WEIXIN波形协议发送。
- * @param  speed_rpm PID浮点输出取整后的目标速度，单位为RPM。
- * @retval None。
- * @note   本函数只更新内存快照，不访问USART1或USART6。
- */
-void serial_monitor_ball_speed_rpm_publish(int32_t speed_rpm);
 #endif
 
 #if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)

@@ -55,8 +55,8 @@
 /* 小球位置环允许通过WEIXIN设置的增益范围。 */
 #define SERIAL_MONITOR_BALL_POSITION_GAIN_MIN (-100.0)
 #define SERIAL_MONITOR_BALL_POSITION_GAIN_MAX (100.0)
-#define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MIN (0.0)
-#define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MAX (100.0)
+#define SERIAL_MONITOR_BALL_VELOCITY_GAIN_MIN (-100.0)
+#define SERIAL_MONITOR_BALL_VELOCITY_GAIN_MAX (100.0)
 #if SERIAL_MONITOR_WAVE_ENABLE
 /* WEIXIN所有已启用波形通道的发送周期，单位为毫秒。 */
 #define SERIAL_MONITOR_WAVE_PERIOD_MS UINT32_C(100)
@@ -84,9 +84,10 @@ static float s_ball_position_ki = BALL_CONTROL_POSITION_KI_DEFAULT;
 static float s_ball_position_kd = BALL_CONTROL_POSITION_KD_DEFAULT;
 /* WEIXIN设置的小球位置环目标，单位为像素。 */
 static int32_t s_ball_target_x;
-/* WEIXIN设置的视觉速度到EMM反向制动角度比例。 */
-static float s_ball_velocity_damping =
-    BALL_CONTROL_VELOCITY_DAMPING_DEFAULT;
+/* WEIXIN设置的小球速度内环PID增益。 */
+static float s_ball_velocity_kp = BALL_CONTROL_VELOCITY_KP_DEFAULT;
+static float s_ball_velocity_ki = BALL_CONTROL_VELOCITY_KI_DEFAULT;
+static float s_ball_velocity_kd = BALL_CONTROL_VELOCITY_KD_DEFAULT;
 /* 上位机请求的EMM绝对位置，单位为度。 */
 static float s_emm_position_deg;
 /* UART 发送最终失败次数，只由本任务更新。 */
@@ -102,16 +103,12 @@ static int32_t s_wave_right_speed;
 static bool s_wave_speed_valid;
 #endif
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
-/* 球控任务发布的视觉小球原始速度快照，单位为像素每帧。 */
-static int8_t s_wave_ball_velocity;
+/* 位置外环输出的小球目标速度，单位为像素每秒。 */
+static float s_wave_ball_target_velocity;
 /* 球控任务发布的STM32估计速度快照，单位为像素每秒。 */
 static float s_wave_ball_filtered_velocity;
 /* 标记球控任务是否已经发布过有效小球速度快照。 */
 static bool s_wave_ball_velocity_valid;
-/* 球控PID最近一次写入EMM邮箱的整数目标速度，单位为RPM。 */
-static int32_t s_wave_emm_speed_rpm;
-/* 球控目标默认静止，先发布0以便上位机启动时立即注册该波形通道。 */
-static bool s_wave_emm_speed_valid = true;
 #endif
 #if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
 /* 球控任务发布的位置环目标和视觉测量位置，单位为像素。 */
@@ -216,11 +213,27 @@ static const struct weixin_param s_params[] = {
     .writable = true,
   },
   {
-    .name = "ball.velocity_damping",
+    .name = "ball.velocity_kp",
     .type = WEIXIN_PARAM_TYPE_FLOAT,
-    .value = &s_ball_velocity_damping,
-    .minimum = SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MIN,
-    .maximum = SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MAX,
+    .value = &s_ball_velocity_kp,
+    .minimum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MAX,
+    .writable = true,
+  },
+  {
+    .name = "ball.velocity_ki",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_velocity_ki,
+    .minimum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MAX,
+    .writable = true,
+  },
+  {
+    .name = "ball.velocity_kd",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_velocity_kd,
+    .minimum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_VELOCITY_GAIN_MAX,
     .writable = true,
   },
   {
@@ -312,14 +325,19 @@ int serial_monitor_ball_target_x_set(int16_t target_x)
   return PLATFORM_OK;
 }
 
-int serial_monitor_ball_velocity_damping_get(float *velocity_damping)
+int serial_monitor_ball_velocity_gains_get(float *velocity_kp,
+                                           float *velocity_ki,
+                                           float *velocity_kd)
 {
-  if (velocity_damping == NULL) {
+  if ((velocity_kp == NULL) || (velocity_ki == NULL) ||
+      (velocity_kd == NULL)) {
     return PLATFORM_ERR_INVALID_ARGUMENT;
   }
 
   taskENTER_CRITICAL();
-  *velocity_damping = s_ball_velocity_damping;
+  *velocity_kp = s_ball_velocity_kp;
+  *velocity_ki = s_ball_velocity_ki;
+  *velocity_kd = s_ball_velocity_kd;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
@@ -404,71 +422,42 @@ static bool serial_monitor_drive_speeds_snapshot_get(
 
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
 /**
- * @brief  发布小球原始速度与低通结果，供WEIXIN波形协议发送。
- * @param  velocity 小球原始速度，单位为像素每帧。
+ * @brief  发布位置外环目标速度与STM32估计速度，供WEIXIN波形协议发送。
+ * @param  target_velocity 位置外环目标速度，单位为像素每秒。
  * @param  filtered_velocity STM32估计并低通处理的速度，单位为像素每秒。
  * @retval None。
  * @note   临界区只保护速度快照和有效标志，不执行串口操作。
  */
-void serial_monitor_ball_velocities_publish(int8_t velocity,
+void serial_monitor_ball_velocities_publish(float target_velocity,
                                             float filtered_velocity)
 {
   taskENTER_CRITICAL();
-  s_wave_ball_velocity = velocity;
+  s_wave_ball_target_velocity = target_velocity;
   s_wave_ball_filtered_velocity = filtered_velocity;
   s_wave_ball_velocity_valid = true;
   taskEXIT_CRITICAL();
 }
 
 /**
- * @brief  获取最近一次视觉小球原始速度快照。
- * @param  velocity 用于接收小球原始速度的变量，单位为像素每帧。
+ * @brief  获取最近一次目标速度与估计速度快照。
+ * @param  target_velocity 用于接收目标速度，单位为像素每秒。
  * @param  filtered_velocity 用于接收STM32估计速度，单位为像素每秒。
  * @return true表示存在有效快照，false表示球控任务尚未发布。
  */
 static bool serial_monitor_ball_velocities_snapshot_get(
-    int8_t *velocity,
+    float *target_velocity,
     float *filtered_velocity)
 {
   bool valid;
 
   taskENTER_CRITICAL();
   valid = s_wave_ball_velocity_valid;
-  *velocity = s_wave_ball_velocity;
+  *target_velocity = s_wave_ball_target_velocity;
   *filtered_velocity = s_wave_ball_filtered_velocity;
   taskEXIT_CRITICAL();
   return valid;
 }
 
-/**
- * @brief  发布球控PID写入EMM邮箱的整数目标速度，供WEIXIN波形协议发送。
- * @param  speed_rpm PID浮点输出取整后的目标速度，单位为RPM。
- * @retval None。
- * @note   临界区只保护速度快照和有效标志，不执行串口操作。
- */
-void serial_monitor_ball_speed_rpm_publish(int32_t speed_rpm)
-{
-  taskENTER_CRITICAL();
-  s_wave_emm_speed_rpm = speed_rpm;
-  s_wave_emm_speed_valid = true;
-  taskEXIT_CRITICAL();
-}
-
-/**
- * @brief  获取最近一次球控PID写入EMM邮箱的整数目标速度快照。
- * @param  speed_rpm 用于接收目标速度的变量，单位为RPM。
- * @return true表示存在有效快照，false表示EMM任务尚未发布。
- */
-static bool serial_monitor_emm_speed_snapshot_get(int32_t *speed_rpm)
-{
-  bool valid;
-
-  taskENTER_CRITICAL();
-  valid = s_wave_emm_speed_valid;
-  *speed_rpm = s_wave_emm_speed_rpm;
-  taskEXIT_CRITICAL();
-  return valid;
-}
 #endif
 
 #if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
@@ -635,9 +624,8 @@ static int serial_monitor_wave_report(struct uart *uart)
   int32_t right_speed;
 #endif
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
-  int8_t ball_velocity;
+  float ball_target_velocity;
   float ball_filtered_velocity;
-  int32_t emm_speed_rpm;
 #endif
 #if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
   int16_t ball_target_x;
@@ -663,28 +651,15 @@ static int serial_monitor_wave_report(struct uart *uart)
 
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
   if (serial_monitor_ball_velocities_snapshot_get(
-          &ball_velocity, &ball_filtered_velocity)) {
+          &ball_target_velocity, &ball_filtered_velocity)) {
     appended = snprintf(
         s_wave_buffer + written,
         sizeof(s_wave_buffer) - (size_t)written,
-        "%swave.ball_velocity_reported=%d "
+        "%swave.ball_target_velocity_px_s=%.3f "
         "wave.ball_velocity_estimated_px_s=%.3f",
         (written > 0) ? " " : "",
-        (int)ball_velocity,
+        (double)ball_target_velocity,
         (double)ball_filtered_velocity);
-    if ((appended < 0) ||
-        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
-      return PLATFORM_ERR_IO;
-    }
-    written += appended;
-  }
-  if (serial_monitor_emm_speed_snapshot_get(&emm_speed_rpm)) {
-    appended = snprintf(
-        s_wave_buffer + written,
-        sizeof(s_wave_buffer) - (size_t)written,
-        "%swave.ball_speed_rpm=%ld",
-        (written > 0) ? " " : "",
-        (long)emm_speed_rpm);
     if ((appended < 0) ||
         (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
       return PLATFORM_ERR_IO;
