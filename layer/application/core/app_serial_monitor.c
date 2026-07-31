@@ -55,6 +55,8 @@
 /* 小球位置环允许通过WEIXIN设置的增益范围。 */
 #define SERIAL_MONITOR_BALL_POSITION_GAIN_MIN (-100.0)
 #define SERIAL_MONITOR_BALL_POSITION_GAIN_MAX (100.0)
+#define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MIN (0.0)
+#define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MAX (100.0)
 #if SERIAL_MONITOR_WAVE_ENABLE
 /* WEIXIN所有已启用波形通道的发送周期，单位为毫秒。 */
 #define SERIAL_MONITOR_WAVE_PERIOD_MS UINT32_C(100)
@@ -80,6 +82,11 @@ static int32_t s_drive_right_speed = SERIAL_MONITOR_DRIVE_SPEED_DEFAULT;
 static float s_ball_position_kp = BALL_CONTROL_POSITION_KP_DEFAULT;
 static float s_ball_position_ki = BALL_CONTROL_POSITION_KI_DEFAULT;
 static float s_ball_position_kd = BALL_CONTROL_POSITION_KD_DEFAULT;
+/* WEIXIN设置的小球位置环目标，单位为像素。 */
+static int32_t s_ball_target_x;
+/* WEIXIN设置的视觉速度到EMM反向制动角度比例。 */
+static float s_ball_velocity_damping =
+    BALL_CONTROL_VELOCITY_DAMPING_DEFAULT;
 /* 上位机请求的EMM绝对位置，单位为度。 */
 static float s_emm_position_deg;
 /* UART 发送最终失败次数，只由本任务更新。 */
@@ -97,7 +104,7 @@ static bool s_wave_speed_valid;
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
 /* 球控任务发布的视觉小球原始速度快照，单位为像素每帧。 */
 static int8_t s_wave_ball_velocity;
-/* 球控任务发布的小球低通滤波速度快照，单位为像素每帧。 */
+/* 球控任务发布的STM32估计速度快照，单位为像素每秒。 */
 static float s_wave_ball_filtered_velocity;
 /* 标记球控任务是否已经发布过有效小球速度快照。 */
 static bool s_wave_ball_velocity_valid;
@@ -201,6 +208,22 @@ static const struct weixin_param s_params[] = {
     .writable = true,
   },
   {
+    .name = "ball.target_x",
+    .type = WEIXIN_PARAM_TYPE_I32,
+    .value = &s_ball_target_x,
+    .minimum = BALL_CONTROL_TARGET_X_MIN,
+    .maximum = BALL_CONTROL_TARGET_X_MAX,
+    .writable = true,
+  },
+  {
+    .name = "ball.velocity_damping",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_velocity_damping,
+    .minimum = SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MIN,
+    .maximum = SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MAX,
+    .writable = true,
+  },
+  {
     .name = "emm.position_deg",
     .type = WEIXIN_PARAM_TYPE_FLOAT,
     .value = &s_emm_position_deg,
@@ -260,6 +283,43 @@ int serial_monitor_ball_position_gains_get(float *position_kp,
   *position_kp = s_ball_position_kp;
   *position_ki = s_ball_position_ki;
   *position_kd = s_ball_position_kd;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int serial_monitor_ball_target_x_get(int16_t *target_x)
+{
+  if (target_x == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+
+  taskENTER_CRITICAL();
+  *target_x = (int16_t)s_ball_target_x;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int serial_monitor_ball_target_x_set(int16_t target_x)
+{
+  if ((target_x < BALL_CONTROL_TARGET_X_MIN) ||
+      (target_x > BALL_CONTROL_TARGET_X_MAX)) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+
+  taskENTER_CRITICAL();
+  s_ball_target_x = (int32_t)target_x;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int serial_monitor_ball_velocity_damping_get(float *velocity_damping)
+{
+  if (velocity_damping == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+
+  taskENTER_CRITICAL();
+  *velocity_damping = s_ball_velocity_damping;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
@@ -346,7 +406,7 @@ static bool serial_monitor_drive_speeds_snapshot_get(
 /**
  * @brief  发布小球原始速度与低通结果，供WEIXIN波形协议发送。
  * @param  velocity 小球原始速度，单位为像素每帧。
- * @param  filtered_velocity 小球低通滤波速度，单位为像素每帧。
+ * @param  filtered_velocity STM32估计并低通处理的速度，单位为像素每秒。
  * @retval None。
  * @note   临界区只保护速度快照和有效标志，不执行串口操作。
  */
@@ -363,7 +423,7 @@ void serial_monitor_ball_velocities_publish(int8_t velocity,
 /**
  * @brief  获取最近一次视觉小球原始速度快照。
  * @param  velocity 用于接收小球原始速度的变量，单位为像素每帧。
- * @param  filtered_velocity 用于接收低通速度的变量，单位为像素每帧。
+ * @param  filtered_velocity 用于接收STM32估计速度，单位为像素每秒。
  * @return true表示存在有效快照，false表示球控任务尚未发布。
  */
 static bool serial_monitor_ball_velocities_snapshot_get(
@@ -607,7 +667,8 @@ static int serial_monitor_wave_report(struct uart *uart)
     appended = snprintf(
         s_wave_buffer + written,
         sizeof(s_wave_buffer) - (size_t)written,
-        "%swave.ball_velocity=%d wave.ball_velocity_filtered=%.3f",
+        "%swave.ball_velocity_reported=%d "
+        "wave.ball_velocity_estimated_px_s=%.3f",
         (written > 0) ? " " : "",
         (int)ball_velocity,
         (double)ball_filtered_velocity);

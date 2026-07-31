@@ -10,6 +10,7 @@
 #include "app_serial_monitor.h"
 #include "app_vision.h"
 #include "low_pass_filter.h"
+#include "math_utils.h"
 #include "pid.h"
 #include "result.h"
 
@@ -22,12 +23,12 @@
 
 #define BALL_CONTROL_PERIOD_MS UINT32_C(20)
 #define BALL_CONTROL_DT_S (0.020F)
-#define BALL_CONTROL_X_MIN INT16_C(-320)
-#define BALL_CONTROL_X_MAX INT16_C(320)
 #define BALL_CONTROL_PRINT_PERIOD_MS UINT32_C(100)
+#define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (20.0F)
+#define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (20.0F)
 /* 小球位置低通滤波中新样本的权重，越小越平滑但位置环响应越慢。 */
 #define BALL_CONTROL_POSITION_FILTER_ALPHA (0.25F)
-/* 小球速度低通滤波中新样本的权重，越小越平滑但响应越慢。 */
+/* STM32位置差分速度低通滤波的新样本权重。 */
 #define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.25F)
 
 /* 位置误差到EMM绝对角度的PID参数，机械方向和增益需通过整机调试确认。 */
@@ -37,27 +38,19 @@ static const struct pid_config s_position_pid_config = {
   .kd = BALL_CONTROL_POSITION_KD_DEFAULT,
   .output_min = -40.0F,
   .output_max = 40.0F,
-  .output_deadband = 0.0F,
+  .output_deadband = 2.0F,
   .integral_clear_error = 0.0F,
   .integral_min = -20.0F,
   .integral_max = 20.0F,
 };
 
-static int16_t s_target_x;
 /* 控制默认启用，PID输出通过绝对角度邮箱交给EMM任务执行。 */
 static bool s_control_enabled = true;
 static struct ball_control_status s_control_status;
 
 int ball_control_target_x_set(int16_t target_x)
 {
-  if ((target_x < BALL_CONTROL_X_MIN) ||
-      (target_x > BALL_CONTROL_X_MAX)) {
-    return PLATFORM_ERR_INVALID_CONFIGURATION;
-  }
-  taskENTER_CRITICAL();
-  s_target_x = target_x;
-  taskEXIT_CRITICAL();
-  return PLATFORM_OK;
+  return serial_monitor_ball_target_x_set(target_x);
 }
 
 int ball_control_enabled_set(bool enabled)
@@ -80,10 +73,12 @@ int ball_control_status_get(struct ball_control_status *status)
 }
 
 static void ball_control_settings_get(int16_t *target_x,
+                                      float *velocity_damping,
                                       bool *enabled)
 {
+  (void)serial_monitor_ball_target_x_get(target_x);
+  (void)serial_monitor_ball_velocity_damping_get(velocity_damping);
   taskENTER_CRITICAL();
-  *target_x = s_target_x;
   *enabled = s_control_enabled;
   taskEXIT_CRITICAL();
 }
@@ -109,6 +104,10 @@ void ball_control_task(void *argument)
   TickType_t last_print_tick;
   TickType_t current_tick;
   float update_dt_s;
+  float previous_filtered_x = 0.0F;
+  float raw_velocity_px_s;
+  float position_error;
+  float velocity_damping;
   float requested_position_kp;
   float requested_position_ki;
   float requested_position_kd;
@@ -116,6 +115,7 @@ void ball_control_task(void *argument)
   float applied_position_ki = BALL_CONTROL_POSITION_KI_DEFAULT;
   float applied_position_kd = BALL_CONTROL_POSITION_KD_DEFAULT;
   uint32_t last_sequence = UINT32_C(0);
+  bool velocity_estimate_initialized = false;
   int result;
 
   (void)argument;
@@ -141,7 +141,8 @@ void ball_control_task(void *argument)
   last_update_tick = last_wake_time;
   last_print_tick = last_wake_time;
   for (;;) {
-    ball_control_settings_get(&status.target_x, &status.enabled);
+    ball_control_settings_get(&status.target_x, &velocity_damping,
+                              &status.enabled);
     result = serial_monitor_ball_position_gains_get(
         &requested_position_kp, &requested_position_ki,
         &requested_position_kd);
@@ -157,6 +158,8 @@ void ball_control_task(void *argument)
         applied_position_kp = requested_position_kp;
         applied_position_ki = requested_position_ki;
         applied_position_kd = requested_position_kd;
+        status.position_pid_output_deg = 0.0F;
+        status.velocity_damping_deg = 0.0F;
         status.output_position_deg = 0.0F;
       }
     }
@@ -177,7 +180,11 @@ void ball_control_task(void *argument)
           &velocity_filter, BALL_CONTROL_VELOCITY_FILTER_ALPHA);
       status.filtered_x = 0.0F;
       status.filtered_velocity = 0.0F;
+      status.position_pid_output_deg = 0.0F;
+      status.velocity_damping_deg = 0.0F;
       status.output_position_deg = 0.0F;
+      status.arrived = false;
+      velocity_estimate_initialized = false;
       last_sequence = status.vision_sequence;
       last_update_tick = xTaskGetTickCount();
     } else if (ball.sequence != last_sequence) {
@@ -191,20 +198,58 @@ void ball_control_task(void *argument)
           &position_filter, (float)ball.x,
           &status.filtered_x);
       if (result == PLATFORM_OK) {
-        result = low_pass_filter_update(
-            &velocity_filter, (float)ball.velocity,
-            &status.filtered_velocity);
+        if (!velocity_estimate_initialized) {
+          previous_filtered_x = status.filtered_x;
+          velocity_estimate_initialized = true;
+          result = low_pass_filter_reset(
+              &velocity_filter, 0.0F);
+          status.filtered_velocity = 0.0F;
+        } else {
+          raw_velocity_px_s =
+              (status.filtered_x - previous_filtered_x) /
+              update_dt_s;
+          previous_filtered_x = status.filtered_x;
+          result = low_pass_filter_update(
+              &velocity_filter, raw_velocity_px_s,
+              &status.filtered_velocity);
+        }
       }
       if (result == PLATFORM_OK) {
-        result = pid_update(&position_controller,
-                            (float)status.target_x -
-                            status.filtered_x,
-                            update_dt_s,
-                            &status.output_position_deg);
+        position_error = (float)status.target_x -
+                         status.filtered_x;
+        status.arrived =
+            (math_abs_float(position_error) <=
+             BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX) &&
+            (math_abs_float(status.filtered_velocity) <=
+             BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S);
+        if (status.arrived) {
+          pid_reset(&position_controller);
+          status.position_pid_output_deg = 0.0F;
+          status.velocity_damping_deg = 0.0F;
+          status.output_position_deg = 0.0F;
+        } else {
+          result = pid_update(&position_controller,
+                              position_error,
+                              update_dt_s,
+                              &status.position_pid_output_deg);
+        }
+      }
+      if ((result == PLATFORM_OK) && !status.arrived) {
+        status.velocity_damping_deg =
+            velocity_damping * status.filtered_velocity;
+        status.output_position_deg = math_clamp_float(
+            status.position_pid_output_deg -
+                status.velocity_damping_deg,
+            s_position_pid_config.output_min,
+            s_position_pid_config.output_max);
       }
       if (result != PLATFORM_OK) {
         pid_reset(&position_controller);
+        status.position_pid_output_deg = 0.0F;
+        status.velocity_damping_deg = 0.0F;
         status.output_position_deg = 0.0F;
+        status.arrived = false;
+        velocity_estimate_initialized = false;
       }
       last_sequence = ball.sequence;
       last_update_tick = current_tick;
@@ -214,7 +259,10 @@ void ball_control_task(void *argument)
     result = emm_v5_target_position_deg_set(status.output_position_deg);
     if (result != PLATFORM_OK) {
       pid_reset(&position_controller);
+      status.position_pid_output_deg = 0.0F;
+      status.velocity_damping_deg = 0.0F;
       status.output_position_deg = 0.0F;
+      status.arrived = false;
       (void)emm_v5_target_position_deg_set(0.0F);
     }
     ball_control_status_set(&status);
@@ -235,15 +283,19 @@ void ball_control_task(void *argument)
         pdMS_TO_TICKS(BALL_CONTROL_PRINT_PERIOD_MS)) {
       printf("[ball_ctrl] target_x=%d measured_x=%d filtered_x=%.3f "
              "error_x=%.3f "
-             "measured_v=%d filtered_v=%.3f output_position_deg=%.3f "
-             "valid=%u\r\n",
+             "reported_v=%d estimated_v_px_s=%.3f position_pid_deg=%.3f "
+             "damping_deg=%.3f output_position_deg=%.3f "
+             "arrived=%u valid=%u\r\n",
              (int)status.target_x,
              (int)status.measured_x,
              (double)status.filtered_x,
              (double)((float)status.target_x - status.filtered_x),
              (int)status.measured_velocity,
              (double)status.filtered_velocity,
+             (double)status.position_pid_output_deg,
+             (double)status.velocity_damping_deg,
              (double)status.output_position_deg,
+             status.arrived ? 1U : 0U,
              status.vision_valid ? 1U : 0U);
       last_print_tick = current_tick;
     }

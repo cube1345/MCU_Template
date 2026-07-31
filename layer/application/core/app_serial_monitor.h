@@ -22,7 +22,7 @@
 #error "SERIAL_MONITOR_DRIVE_DEBUG_ENABLE must be 0 or 1"
 #endif
 
-/* 小球原始速度、滤波速度及PID输出速度波形开关。 */
+/* Jetson报告速度、STM32估计速度及旧PID速度输出波形开关。 */
 #ifndef SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE
 #define SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE 0
 #endif
@@ -97,6 +97,27 @@ int serial_monitor_ball_position_gains_get(float *position_kp,
                                            float *position_kd);
 
 /**
+ * @brief  获取WEIXIN上位机设置的小球目标位置。
+ * @param  target_x 用于接收目标位置，单位为像素。
+ * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
+ */
+int serial_monitor_ball_target_x_get(int16_t *target_x);
+
+/**
+ * @brief  更新WEIXIN参数表中的小球目标位置。
+ * @param  target_x 相对水管中心的目标位置，单位为像素。
+ * @return PLATFORM_OK表示成功，超出范围时返回配置错误。
+ */
+int serial_monitor_ball_target_x_set(int16_t target_x);
+
+/**
+ * @brief  获取小球速度阻尼系数。
+ * @param  velocity_damping 用于接收速度到反向制动角度的比例系数。
+ * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
+ */
+int serial_monitor_ball_velocity_damping_get(float *velocity_damping);
+
+/**
  * @brief  获取上位机配置的左右轮循迹基础速度快照。
  * @param  left_speed 用于接收左轮基础速度，单位为编码器计数每秒。
  * @param  right_speed 用于接收右轮基础速度，单位为编码器计数每秒。
@@ -130,7 +151,7 @@ void serial_monitor_drive_speeds_publish(int32_t left_speed,
 /**
  * @brief  发布小球原始速度与低通结果，供WEIXIN波形协议发送。
  * @param  velocity 小球原始速度，单位为像素每帧。
- * @param  filtered_velocity 小球低通滤波速度，单位为像素每帧。
+ * @param  filtered_velocity STM32估计并低通处理的速度，单位为像素每秒。
  * @retval None。
  * @note   本函数只更新内存快照，不访问USART1或USART6。
  */

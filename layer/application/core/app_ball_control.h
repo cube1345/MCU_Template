@@ -10,10 +10,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* 相对水管中心的小球目标位置范围，单位为像素。 */
+#define BALL_CONTROL_TARGET_X_MIN INT16_C(-320)
+#define BALL_CONTROL_TARGET_X_MAX INT16_C(320)
+
 /* 小球位置环上电默认增益，同时作为WEIXIN参数默认值。 */
-#define BALL_CONTROL_POSITION_KP_DEFAULT (0.02F)
+#define BALL_CONTROL_POSITION_KP_DEFAULT (0.01F)
 #define BALL_CONTROL_POSITION_KI_DEFAULT (0.1F)
-#define BALL_CONTROL_POSITION_KD_DEFAULT (0.08F)
+#define BALL_CONTROL_POSITION_KD_DEFAULT (0.0F)
+/* STM32估计速度到EMM反向制动角度的默认比例，单位为度/(像素/秒)。 */
+#define BALL_CONTROL_VELOCITY_DAMPING_DEFAULT (0.06F)
 
 struct ball_control_status {
   int16_t target_x;
@@ -22,12 +28,18 @@ struct ball_control_status {
   float filtered_x;
   /* Jetson帧中的原始小球速度，单位为像素每帧。 */
   int8_t measured_velocity;
-  /* 原始小球速度经过一阶低通后的结果，单位为像素每帧。 */
+  /* STM32根据滤波位置估计并低通处理的速度，单位为像素每秒。 */
   float filtered_velocity;
   int8_t measured_acceleration;
   uint32_t vision_sequence;
-  /* PID输出及EMM绝对位置目标，单位为度。 */
+  /* 位置PID在叠加速度阻尼前的角度输出，单位为度。 */
+  float position_pid_output_deg;
+  /* 根据滤波速度计算的反向制动角度，单位为度。 */
+  float velocity_damping_deg;
+  /* 位置PID减去速度阻尼后的EMM绝对位置目标，单位为度。 */
   float output_position_deg;
+  /* 位置和速度同时进入容差范围后置位。 */
+  bool arrived;
   bool enabled;
   bool vision_valid;
 };
@@ -58,7 +70,7 @@ int ball_control_status_get(struct ball_control_status *status);
  * @brief  运行小球位置闭环控制任务。
  * @param  argument FreeRTOS任务参数，当前未使用。
  * @retval None。
- * @note   位置误差经PID换算为绝对角度，通过邮箱由EMM任务串行执行。
+ * @note   位置PID输出减去显式速度阻尼后作为EMM绝对角度目标。
  */
 void ball_control_task(void *argument);
 
