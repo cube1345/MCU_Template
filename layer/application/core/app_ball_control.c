@@ -25,11 +25,22 @@
 #define BALL_CONTROL_DT_S (0.020F)
 #define BALL_CONTROL_PRINT_PERIOD_MS UINT32_C(100)
 #define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (20.0F)
+#define BALL_CONTROL_ARRIVAL_EXIT_POSITION_TOLERANCE_PX (40.0F)
 #define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (80.0F)
 /* 小球位置低通滤波中新样本的权重，越小越平滑但位置环响应越慢。 */
 #define BALL_CONTROL_POSITION_FILTER_ALPHA (0.8F)
 /* STM32位置差分速度低通滤波的新样本权重。 */
 #define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.3F)
+/* 小球静止但仍有位置误差时，克服静摩擦所需的最小输出角度。 */
+#define BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG (5.0F)
+/* 低于该速度时允许进入静摩擦补偿，单位为像素每秒。 */
+#define BALL_CONTROL_STATIC_FRICTION_ENTER_VELOCITY_PX_S (10.0F)
+/* 高于该速度时退出补偿；与进入阈值形成迟滞以防频繁切换。 */
+#define BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S (20.0F)
+/* 位置误差不超过该值时禁止补偿，避免在目标附近持续推动小球。 */
+#define BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX (10.0F)
+/* 基础控制输出过小时方向不明确，此时不施加补偿。 */
+#define BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG (0.01F)
 
 /* 位置误差到EMM绝对角度的PID参数，机械方向和增益需通过整机调试确认。 */
 static const struct pid_config s_position_pid_config = {
@@ -107,6 +118,7 @@ void ball_control_task(void *argument)
   float previous_filtered_x = 0.0F;
   float raw_velocity_px_s;
   float position_error;
+  float uncompensated_output_deg;
   float velocity_damping;
   float requested_position_kp;
   float requested_position_ki;
@@ -116,6 +128,7 @@ void ball_control_task(void *argument)
   float applied_position_kd = BALL_CONTROL_POSITION_KD_DEFAULT;
   uint32_t last_sequence = UINT32_C(0);
   bool velocity_estimate_initialized = false;
+  bool static_friction_compensation_active = false;
   int result;
 
   (void)argument;
@@ -161,6 +174,7 @@ void ball_control_task(void *argument)
         status.position_pid_output_deg = 0.0F;
         status.velocity_damping_deg = 0.0F;
         status.output_position_deg = 0.0F;
+        static_friction_compensation_active = false;
       }
     }
     result = vision_get_ball_data(&ball);
@@ -184,6 +198,7 @@ void ball_control_task(void *argument)
       status.velocity_damping_deg = 0.0F;
       status.output_position_deg = 0.0F;
       status.arrived = false;
+      static_friction_compensation_active = false;
       velocity_estimate_initialized = false;
       last_sequence = status.vision_sequence;
       last_update_tick = xTaskGetTickCount();
@@ -217,16 +232,23 @@ void ball_control_task(void *argument)
       if (result == PLATFORM_OK) {
         position_error = (float)status.target_x -
                          status.filtered_x;
-        status.arrived =
-            (math_abs_float(position_error) <=
-             BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX) &&
-            (math_abs_float(status.filtered_velocity) <=
-             BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S);
+        if (status.arrived) {
+          if (math_abs_float(position_error) >
+              BALL_CONTROL_ARRIVAL_EXIT_POSITION_TOLERANCE_PX) {
+            status.arrived = false;
+          }
+        } else if ((math_abs_float(position_error) <=
+                    BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX) &&
+                   (math_abs_float(status.filtered_velocity) <=
+                    BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S)) {
+          status.arrived = true;
+        }
         if (status.arrived) {
           pid_reset(&position_controller);
           status.position_pid_output_deg = 0.0F;
           status.velocity_damping_deg = 0.0F;
           status.output_position_deg = 0.0F;
+          static_friction_compensation_active = false;
         } else {
           result = pid_update(&position_controller,
                               position_error,
@@ -237,9 +259,36 @@ void ball_control_task(void *argument)
       if ((result == PLATFORM_OK) && !status.arrived) {
         status.velocity_damping_deg =
             velocity_damping * status.filtered_velocity;
-        status.output_position_deg = math_clamp_float(
+        uncompensated_output_deg =
             status.position_pid_output_deg -
-                status.velocity_damping_deg,
+            status.velocity_damping_deg;
+        if (static_friction_compensation_active) {
+          if ((math_abs_float(status.filtered_velocity) >=
+               BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S) ||
+              (math_abs_float(position_error) <=
+               BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX) ||
+              (math_abs_float(uncompensated_output_deg) <=
+               BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG)) {
+            static_friction_compensation_active = false;
+          }
+        } else if ((math_abs_float(status.filtered_velocity) <=
+                    BALL_CONTROL_STATIC_FRICTION_ENTER_VELOCITY_PX_S) &&
+                   (math_abs_float(position_error) >
+                    BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX) &&
+                   (math_abs_float(uncompensated_output_deg) >
+                    BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG)) {
+          static_friction_compensation_active = true;
+        }
+        if (static_friction_compensation_active &&
+            (math_abs_float(uncompensated_output_deg) <
+             BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG)) {
+          uncompensated_output_deg =
+              (uncompensated_output_deg > 0.0F) ?
+              BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG :
+              -BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG;
+        }
+        status.output_position_deg = math_clamp_float(
+            uncompensated_output_deg,
             s_position_pid_config.output_min,
             s_position_pid_config.output_max);
       }
@@ -249,6 +298,7 @@ void ball_control_task(void *argument)
         status.velocity_damping_deg = 0.0F;
         status.output_position_deg = 0.0F;
         status.arrived = false;
+        static_friction_compensation_active = false;
         velocity_estimate_initialized = false;
       }
       last_sequence = ball.sequence;
@@ -263,6 +313,7 @@ void ball_control_task(void *argument)
       status.velocity_damping_deg = 0.0F;
       status.output_position_deg = 0.0F;
       status.arrived = false;
+      static_friction_compensation_active = false;
       (void)emm_v5_target_position_deg_set(0.0F);
     }
     ball_control_status_set(&status);
@@ -284,7 +335,7 @@ void ball_control_task(void *argument)
       printf("[ball_ctrl] target_x=%d measured_x=%d filtered_x=%.3f "
              "error_x=%.3f "
              "reported_v=%d estimated_v_px_s=%.3f position_pid_deg=%.3f "
-             "damping_deg=%.3f output_position_deg=%.3f "
+             "damping_deg=%.3f output_position_deg=%.3f friction_comp=%u "
              "arrived=%u valid=%u\r\n",
              (int)status.target_x,
              (int)status.measured_x,
@@ -295,6 +346,7 @@ void ball_control_task(void *argument)
              (double)status.position_pid_output_deg,
              (double)status.velocity_damping_deg,
              (double)status.output_position_deg,
+             static_friction_compensation_active ? 1U : 0U,
              status.arrived ? 1U : 0U,
              status.vision_valid ? 1U : 0U);
       last_print_tick = current_tick;

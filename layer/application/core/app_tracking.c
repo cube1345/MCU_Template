@@ -78,6 +78,7 @@ static bool s_tracking_enabled;
 static struct tracking_status s_tracking_status;
 static bool s_tracking_base_speeds_overridden;
 static struct tracking_base_speeds s_tracking_base_speeds;
+static uint16_t s_tracking_output_scale = APP_TRACKING_OUTPUT_SCALE_MAX;
 static bool s_tracking_manual_enabled;
 static struct tracking_base_speeds s_tracking_manual_speeds;
 
@@ -87,6 +88,7 @@ int tracking_enabled_set(bool enabled)
   s_tracking_enabled = enabled;
   s_tracking_manual_enabled = false;
   if (!enabled) {
+    s_tracking_output_scale = APP_TRACKING_OUTPUT_SCALE_MAX;
     s_tracking_status.sample_valid = false;
     s_tracking_status.stop_marker_raw_detected = false;
     s_tracking_status.stop_marker_detected = false;
@@ -125,6 +127,17 @@ int tracking_base_speeds_set(int32_t left_speed, int32_t right_speed)
   s_tracking_base_speeds.left_speed = left_speed;
   s_tracking_base_speeds.right_speed = right_speed;
   s_tracking_base_speeds_overridden = true;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int tracking_output_scale_set(uint16_t scale_per_mille)
+{
+  if (scale_per_mille > APP_TRACKING_OUTPUT_SCALE_MAX) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+  taskENTER_CRITICAL();
+  s_tracking_output_scale = scale_per_mille;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
@@ -299,6 +312,16 @@ static int32_t tracking_speed_limit(int32_t speed)
   return speed;
 }
 
+static uint16_t tracking_output_scale_get(void)
+{
+  uint16_t scale_per_mille;
+
+  taskENTER_CRITICAL();
+  scale_per_mille = s_tracking_output_scale;
+  taskEXIT_CRITICAL();
+  return scale_per_mille;
+}
+
 /**
  * @brief  对本周期位置误差执行 Q8 定点一阶低通滤波。
  * @param  control 循迹控制器的跨周期状态。
@@ -369,6 +392,7 @@ static void tracking_targets_update(
     bool line_found,
     int32_t measured_error,
     const struct tracking_base_speeds *base_speeds,
+    uint16_t output_scale_per_mille,
     struct tracking_wheel_targets *targets)
 {
   TickType_t current_time;
@@ -418,6 +442,12 @@ static void tracking_targets_update(
       base_speeds->left_speed + differential);
   targets->right_speed = tracking_speed_limit(
       base_speeds->right_speed - differential);
+  targets->left_speed =
+      (targets->left_speed * (int32_t)output_scale_per_mille) /
+      (int32_t)APP_TRACKING_OUTPUT_SCALE_MAX;
+  targets->right_speed =
+      (targets->right_speed * (int32_t)output_scale_per_mille) /
+      (int32_t)APP_TRACKING_OUTPUT_SCALE_MAX;
 }
 
 /**
@@ -471,6 +501,7 @@ void tracking_task(void *argument)
   TickType_t current_time;
 #endif
   int32_t measured_error = INT32_C(0);
+  uint16_t output_scale_per_mille;
   bool line_found;
   bool enabled;
   int result;
@@ -507,12 +538,14 @@ void tracking_task(void *argument)
     if (result == PLATFORM_OK) {
       result = tracking_inputs_sample(inputs, &inputs_state);
     }
+    output_scale_per_mille = tracking_output_scale_get();
     if (result == PLATFORM_OK) {
       line_found = tracking_error_calculate(&inputs_state,
                                              &measured_error);
       tracking_status_publish(&inputs_state);
       tracking_targets_update(&control, line_found,
                               measured_error, &base_speeds,
+                              output_scale_per_mille,
                               &targets);
       result = tracking_targets_publish(&targets);
     }

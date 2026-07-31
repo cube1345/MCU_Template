@@ -73,10 +73,14 @@
 #define MISSION_TASK4_BALL_TARGET_X INT16_C(2)
 /* 任务5循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
 #define MISSION_TASK5_TRACKING_SPEED INT32_C(60000)
+/* 任务5启动时从静止线性加速到目标速度的时间，单位为毫秒。 */
+#define MISSION_TASK5_STARTUP_RAMP_MS UINT32_C(3000)
 /* 任务5的小球视觉X目标，2表示当前标定的摆杆中心点。 */
 #define MISSION_TASK5_BALL_TARGET_X INT16_C(2)
 /* 任务6循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
 #define MISSION_TASK6_TRACKING_SPEED INT32_C(60000)
+/* 任务6启动时从静止线性加速到目标速度的时间，单位为毫秒。 */
+#define MISSION_TASK6_STARTUP_RAMP_MS UINT32_C(3000)
 
 /* 任务3机械+5cm对应的视觉X目标。 */
 #define MISSION_TASK3_POSITIVE_5CM_TARGET_X INT16_C(130)
@@ -86,6 +90,13 @@
 #define MISSION_TASK3_GO_POSITIVE_5CM UINT8_C(0)
 /* 任务3子阶段：小球折返并前往机械-5cm位置。 */
 #define MISSION_TASK3_GO_NEGATIVE_5CM UINT8_C(1)
+
+/* 任务6子阶段：车辆静止并采集评委指定的小球位置。 */
+#define MISSION_TASK6_SAMPLE_TARGET UINT8_C(0)
+/* 任务6子阶段：保持采样目标并缓慢启动循迹。 */
+#define MISSION_TASK6_TRACK_AND_HOLD UINT8_C(1)
+/* 任务6用于计算目标位置平均值的有效视觉新帧数量。 */
+#define MISSION_TASK6_TARGET_SAMPLE_FRAMES UINT8_C(30)
 
 static const int8_t s_task2_tracking_weights[APP_TRACKING_WEIGHT_COUNT] = {
   -15, -10, -6, -6, 6, 6, 10, 15
@@ -112,6 +123,11 @@ static struct mission_snapshot s_snapshot = {
 static TickType_t s_started_tick;
 static TickType_t s_task2_phase_started_tick;
 static uint32_t s_task3_target_start_sequence;
+static bool s_tracking_startup_ramp_complete = true;
+static TickType_t s_tracking_startup_ramp_started_tick;
+static int32_t s_task6_target_position_sum;
+static uint32_t s_task6_last_vision_sequence;
+static uint8_t s_task6_target_sample_count;
 
 static const char *const s_task_names[MISSION_COUNT] = {
   "VISION RECORD",
@@ -199,7 +215,8 @@ static int mission_outputs_stop(void)
 
 static int mission_tracking_start(
     int32_t speed,
-    const int8_t weights[APP_TRACKING_WEIGHT_COUNT])
+    const int8_t weights[APP_TRACKING_WEIGHT_COUNT],
+    uint16_t initial_scale_per_mille)
 {
   int result = tracking_weights_set(weights);
 
@@ -207,7 +224,27 @@ static int mission_tracking_start(
     result = tracking_base_speeds_set(speed, speed);
   }
   if (result == PLATFORM_OK) {
+    result = tracking_output_scale_set(initial_scale_per_mille);
+  }
+  if (result == PLATFORM_OK) {
     result = tracking_enabled_set(true);
+  }
+  return result;
+}
+
+static int mission_task6_start(void)
+{
+  struct ball_control_status ball_status;
+  int result;
+
+  s_task6_target_position_sum = INT32_C(0);
+  s_task6_target_sample_count = UINT8_C(0);
+  result = ball_control_status_get(&ball_status);
+  if (result == PLATFORM_OK) {
+    s_task6_last_vision_sequence = ball_status.vision_sequence;
+    result = mission_tracking_start(MISSION_TASK6_TRACKING_SPEED,
+                                    s_task6_tracking_weights,
+                                    UINT16_C(0));
   }
   return result;
 }
@@ -226,7 +263,8 @@ static int mission_selected_start(uint8_t selected_task)
     return PLATFORM_OK;
   case UINT8_C(2):
     return mission_tracking_start(MISSION_TASK2_TRACKING_SPEED,
-                                  s_task2_tracking_weights);
+                                  s_task2_tracking_weights,
+                                  APP_TRACKING_OUTPUT_SCALE_MAX);
   case UINT8_C(3):
     {
       struct ball_control_status ball_status;
@@ -258,16 +296,13 @@ static int mission_selected_start(uint8_t selected_task)
           MISSION_TASK5_TRACKING_SPEED,
           (selected_task == UINT8_C(4)) ?
           s_task4_tracking_weights :
-          s_task5_tracking_weights);
+          s_task5_tracking_weights,
+          (selected_task == UINT8_C(4)) ?
+          APP_TRACKING_OUTPUT_SCALE_MAX : UINT16_C(0));
     }
     return result;
   case UINT8_C(6):
-    result = ball_control_enabled_set(true);
-    if (result == PLATFORM_OK) {
-      result = mission_tracking_start(MISSION_TASK6_TRACKING_SPEED,
-                                      s_task6_tracking_weights);
-    }
-    return result;
+    return mission_task6_start();
   default:
     return PLATFORM_ERR_INVALID_CONFIGURATION;
   }
@@ -300,6 +335,10 @@ static void mission_start(void)
   s_snapshot.state = (result == PLATFORM_OK) ?
                      MISSION_STATE_RUNNING : MISSION_STATE_ERROR;
   s_started_tick = xTaskGetTickCount();
+  s_tracking_startup_ramp_started_tick = s_started_tick;
+  s_tracking_startup_ramp_complete =
+      (selected_task != UINT8_C(5)) &&
+      (selected_task != UINT8_C(6));
   s_snapshot.revision++;
   taskEXIT_CRITICAL();
   printf("[mission] task %u %s\r\n", (unsigned int)selected_task,
@@ -514,6 +553,96 @@ static void mission_task4_update(void)
   }
 }
 
+static void mission_tracking_startup_update(uint32_t ramp_duration_ms)
+{
+  TickType_t elapsed_ticks;
+  TickType_t ramp_ticks;
+  uint16_t scale_per_mille;
+  int result;
+
+  if (s_tracking_startup_ramp_complete) {
+    return;
+  }
+  elapsed_ticks =
+      xTaskGetTickCount() - s_tracking_startup_ramp_started_tick;
+  ramp_ticks = pdMS_TO_TICKS(ramp_duration_ms);
+  if ((ramp_ticks == 0U) || (elapsed_ticks >= ramp_ticks)) {
+    scale_per_mille = APP_TRACKING_OUTPUT_SCALE_MAX;
+  } else {
+    scale_per_mille = (uint16_t)(
+        ((uint32_t)elapsed_ticks *
+         (uint32_t)APP_TRACKING_OUTPUT_SCALE_MAX) /
+        (uint32_t)ramp_ticks);
+  }
+  result = tracking_output_scale_set(scale_per_mille);
+  if (result != PLATFORM_OK) {
+    mission_error_set(result);
+    return;
+  }
+  if (scale_per_mille >= APP_TRACKING_OUTPUT_SCALE_MAX) {
+    s_tracking_startup_ramp_complete = true;
+  }
+}
+
+static int16_t mission_task6_target_average_get(void)
+{
+  int32_t rounded_sum = s_task6_target_position_sum;
+  int32_t half_sample_count =
+      (int32_t)MISSION_TASK6_TARGET_SAMPLE_FRAMES / INT32_C(2);
+
+  rounded_sum += (rounded_sum >= INT32_C(0)) ?
+                 half_sample_count : -half_sample_count;
+  return (int16_t)(rounded_sum /
+                   (int32_t)MISSION_TASK6_TARGET_SAMPLE_FRAMES);
+}
+
+static void mission_task6_update(uint8_t substep)
+{
+  struct ball_control_status ball_status;
+  int16_t target_x;
+  int result;
+
+  if (substep == MISSION_TASK6_TRACK_AND_HOLD) {
+    mission_tracking_startup_update(MISSION_TASK6_STARTUP_RAMP_MS);
+    return;
+  }
+  if (substep != MISSION_TASK6_SAMPLE_TARGET) {
+    mission_error_set(PLATFORM_ERR_INVALID_STATE);
+    return;
+  }
+  result = ball_control_status_get(&ball_status);
+  if ((result != PLATFORM_OK) || !ball_status.vision_valid ||
+      (ball_status.vision_sequence == s_task6_last_vision_sequence)) {
+    return;
+  }
+  s_task6_last_vision_sequence = ball_status.vision_sequence;
+  s_task6_target_position_sum += (int32_t)ball_status.measured_x;
+  s_task6_target_sample_count++;
+  if (s_task6_target_sample_count <
+      MISSION_TASK6_TARGET_SAMPLE_FRAMES) {
+    return;
+  }
+
+  target_x = mission_task6_target_average_get();
+  result = ball_control_target_x_set(target_x);
+  if (result == PLATFORM_OK) {
+    result = ball_control_enabled_set(true);
+  }
+  if (result != PLATFORM_OK) {
+    mission_error_set(result);
+    return;
+  }
+  s_tracking_startup_ramp_started_tick = xTaskGetTickCount();
+  s_tracking_startup_ramp_complete = false;
+  taskENTER_CRITICAL();
+  s_snapshot.substep = MISSION_TASK6_TRACK_AND_HOLD;
+  s_snapshot.revision++;
+  taskEXIT_CRITICAL();
+  printf("[mission] task 6 target_x=%d from %u frames\r\n",
+         (int)target_x,
+         (unsigned int)MISSION_TASK6_TARGET_SAMPLE_FRAMES);
+}
+
 static void mission_running_update(void)
 {
   uint8_t selected_task;
@@ -535,6 +664,10 @@ static void mission_running_update(void)
     mission_task3_update(substep);
   } else if (selected_task == UINT8_C(4)) {
     mission_task4_update();
+  } else if (selected_task == UINT8_C(5)) {
+    mission_tracking_startup_update(MISSION_TASK5_STARTUP_RAMP_MS);
+  } else if (selected_task == UINT8_C(6)) {
+    mission_task6_update(substep);
   }
 }
 

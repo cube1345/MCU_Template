@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #define APP_TRACKING_WEIGHT_COUNT UINT8_C(8)
+#define APP_TRACKING_OUTPUT_SCALE_MAX UINT16_C(1000)
 
 struct tracking_status {
   bool sample_valid;
@@ -24,6 +25,7 @@ struct tracking_status {
 int tracking_enabled_set(bool enabled);
 int tracking_enabled_get(bool *enabled);
 int tracking_base_speeds_set(int32_t left_speed, int32_t right_speed);
+int tracking_output_scale_set(uint16_t scale_per_mille);
 int tracking_manual_speeds_set(int32_t left_speed, int32_t right_speed);
 int tracking_weights_set(
     const int8_t weights[APP_TRACKING_WEIGHT_COUNT]);
