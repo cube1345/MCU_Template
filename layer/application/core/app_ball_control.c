@@ -44,8 +44,8 @@ static const struct pid_config s_position_pid_config = {
   .integral_max = 20.0F,
 };
 
-/* 控制默认启用，PID输出通过绝对角度邮箱交给EMM任务执行。 */
-static bool s_control_enabled = true;
+/* 上电默认关闭，由任务状态机在选定项目启动后显式开启。 */
+static bool s_control_enabled;
 static struct ball_control_status s_control_status;
 
 int ball_control_target_x_set(int16_t target_x)

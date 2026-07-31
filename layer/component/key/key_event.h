@@ -31,6 +31,8 @@
 #define KEY_EVENT_LONG INT32_C(2)
 #define KEY_EVENT_REPEAT INT32_C(3)
 #define KEY_EVENT_DOUBLE_CLICK INT32_C(4)
+#define KEY_EVENT_SHORT_RELEASE INT32_C(5)
+#define KEY_EVENT_LONG_RELEASE INT32_C(6)
 
 struct key_event {
   struct key *key;

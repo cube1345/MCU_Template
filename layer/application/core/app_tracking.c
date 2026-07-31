@@ -21,6 +21,8 @@
 
 /* 循迹输入和目标速度的更新周期，单位为毫秒。 */
 #define TRACKING_CONTROL_PERIOD_MS UINT32_C(5)
+/* Consecutive samples required to confirm entering or leaving a stop marker. */
+#define TRACKING_STOP_MARKER_CONFIRM_SAMPLES UINT8_C(3)
 /* 设为1时周期打印循迹输入和目标速度，量产运行默认关闭。 */
 #define TRACKING_STATUS_PRINT_ENABLE INT32_C(0)
 #if (TRACKING_STATUS_PRINT_ENABLE == 1)
@@ -41,7 +43,7 @@
 #define TRACKING_LOST_STOP_MS UINT32_C(1000)
 
 /* io0 至 io7 从左到右的位置权重，负值表示线位于车体左侧。 */
-static const int8_t s_tracking_weights[TRACKING_INPUTS_COUNT] = {
+static int8_t s_tracking_weights[TRACKING_INPUTS_COUNT] = {
   -8, -6, -4, -3, 3, 4, 6, 8
 };
 
@@ -71,6 +73,221 @@ struct tracking_base_speeds {
  * @param  speed 待限制的轮速，单位为编码器计数每秒。
  * @return 限制后的轮速。
  */
+/* Mission selection owns this gate. Keep the vehicle stopped at startup. */
+static bool s_tracking_enabled;
+static struct tracking_status s_tracking_status;
+static bool s_tracking_base_speeds_overridden;
+static struct tracking_base_speeds s_tracking_base_speeds;
+static bool s_tracking_manual_enabled;
+static struct tracking_base_speeds s_tracking_manual_speeds;
+
+int tracking_enabled_set(bool enabled)
+{
+  taskENTER_CRITICAL();
+  s_tracking_enabled = enabled;
+  s_tracking_manual_enabled = false;
+  if (!enabled) {
+    s_tracking_status.sample_valid = false;
+    s_tracking_status.stop_marker_raw_detected = false;
+    s_tracking_status.stop_marker_detected = false;
+    s_tracking_status.stop_marker_clear_confirmed = false;
+    s_tracking_status.longest_adjacent_black = UINT8_C(0);
+    s_tracking_status.stop_marker_confirm_count = UINT8_C(0);
+    s_tracking_status.stop_marker_clear_count = UINT8_C(0);
+  }
+  taskEXIT_CRITICAL();
+  if (!enabled) {
+    return motor_target_speeds_set(INT32_C(0), INT32_C(0));
+  }
+  return PLATFORM_OK;
+}
+
+int tracking_status_get(struct tracking_status *status)
+{
+  if (status == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  taskENTER_CRITICAL();
+  *status = s_tracking_status;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int tracking_base_speeds_set(int32_t left_speed, int32_t right_speed)
+{
+  if ((left_speed < -TRACKING_TARGET_SPEED_LIMIT) ||
+      (left_speed > TRACKING_TARGET_SPEED_LIMIT) ||
+      (right_speed < -TRACKING_TARGET_SPEED_LIMIT) ||
+      (right_speed > TRACKING_TARGET_SPEED_LIMIT)) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+  taskENTER_CRITICAL();
+  s_tracking_base_speeds.left_speed = left_speed;
+  s_tracking_base_speeds.right_speed = right_speed;
+  s_tracking_base_speeds_overridden = true;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int tracking_manual_speeds_set(int32_t left_speed, int32_t right_speed)
+{
+  if ((left_speed < -TRACKING_TARGET_SPEED_LIMIT) ||
+      (left_speed > TRACKING_TARGET_SPEED_LIMIT) ||
+      (right_speed < -TRACKING_TARGET_SPEED_LIMIT) ||
+      (right_speed > TRACKING_TARGET_SPEED_LIMIT)) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+  taskENTER_CRITICAL();
+  s_tracking_enabled = false;
+  s_tracking_status.sample_valid = false;
+  s_tracking_status.stop_marker_raw_detected = false;
+  s_tracking_status.stop_marker_detected = false;
+  s_tracking_status.stop_marker_clear_confirmed = false;
+  s_tracking_status.longest_adjacent_black = UINT8_C(0);
+  s_tracking_status.stop_marker_confirm_count = UINT8_C(0);
+  s_tracking_status.stop_marker_clear_count = UINT8_C(0);
+  s_tracking_manual_speeds.left_speed = left_speed;
+  s_tracking_manual_speeds.right_speed = right_speed;
+  s_tracking_manual_enabled = true;
+  taskEXIT_CRITICAL();
+  return motor_target_speeds_set(left_speed, right_speed);
+}
+
+int tracking_weights_set(
+    const int8_t weights[APP_TRACKING_WEIGHT_COUNT])
+{
+  uint8_t index;
+
+  if (weights == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  taskENTER_CRITICAL();
+  if (s_tracking_enabled || s_tracking_manual_enabled) {
+    taskEXIT_CRITICAL();
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+  for (index = UINT8_C(0); index < TRACKING_INPUTS_COUNT; index++) {
+    s_tracking_weights[index] = weights[index];
+  }
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+static int tracking_base_speeds_get(
+    struct tracking_base_speeds *base_speeds)
+{
+  bool overridden;
+
+  taskENTER_CRITICAL();
+  overridden = s_tracking_base_speeds_overridden;
+  if (overridden) {
+    *base_speeds = s_tracking_base_speeds;
+  }
+  taskEXIT_CRITICAL();
+  if (overridden) {
+    return PLATFORM_OK;
+  }
+  return serial_monitor_drive_base_speeds_get(
+      &base_speeds->left_speed, &base_speeds->right_speed);
+}
+
+static int tracking_inactive_targets_publish(void)
+{
+  int result;
+
+  taskENTER_CRITICAL();
+  if (s_tracking_manual_enabled) {
+    result = motor_target_speeds_set(
+        s_tracking_manual_speeds.left_speed,
+        s_tracking_manual_speeds.right_speed);
+  } else {
+    result = motor_target_speeds_set(INT32_C(0), INT32_C(0));
+  }
+  taskEXIT_CRITICAL();
+  return result;
+}
+
+static uint8_t tracking_longest_adjacent_black_get(
+    const struct tracking_inputs_state *inputs)
+{
+  uint8_t longest = UINT8_C(0);
+  uint8_t current = UINT8_C(0);
+  uint8_t index;
+
+  for (index = UINT8_C(0); index < TRACKING_INPUTS_COUNT; index++) {
+    if (!inputs->high[index]) {
+      current++;
+      if (current > longest) {
+        longest = current;
+      }
+    } else {
+      current = UINT8_C(0);
+    }
+  }
+  return longest;
+}
+
+static void tracking_status_publish(
+    const struct tracking_inputs_state *inputs)
+{
+  uint8_t longest = tracking_longest_adjacent_black_get(inputs);
+  bool marker_raw_detected = (longest >= UINT8_C(3));
+
+  taskENTER_CRITICAL();
+  if (s_tracking_enabled) {
+    if (marker_raw_detected) {
+      if (s_tracking_status.stop_marker_confirm_count <
+          TRACKING_STOP_MARKER_CONFIRM_SAMPLES) {
+        s_tracking_status.stop_marker_confirm_count++;
+      }
+      s_tracking_status.stop_marker_clear_count = UINT8_C(0);
+    } else {
+      s_tracking_status.stop_marker_confirm_count = UINT8_C(0);
+      if (s_tracking_status.stop_marker_clear_count <
+          TRACKING_STOP_MARKER_CONFIRM_SAMPLES) {
+        s_tracking_status.stop_marker_clear_count++;
+      }
+    }
+    s_tracking_status.sample_valid = true;
+    s_tracking_status.longest_adjacent_black = longest;
+    s_tracking_status.stop_marker_raw_detected = marker_raw_detected;
+    s_tracking_status.stop_marker_detected =
+        (s_tracking_status.stop_marker_confirm_count >=
+         TRACKING_STOP_MARKER_CONFIRM_SAMPLES);
+    s_tracking_status.stop_marker_clear_confirmed =
+        (s_tracking_status.stop_marker_clear_count >=
+         TRACKING_STOP_MARKER_CONFIRM_SAMPLES);
+  }
+  taskEXIT_CRITICAL();
+}
+
+static int tracking_targets_publish(
+    const struct tracking_wheel_targets *targets)
+{
+  int result;
+
+  taskENTER_CRITICAL();
+  if (s_tracking_enabled) {
+    result = motor_target_speeds_set(targets->left_speed,
+                                     targets->right_speed);
+  } else {
+    result = motor_target_speeds_set(INT32_C(0), INT32_C(0));
+  }
+  taskEXIT_CRITICAL();
+  return result;
+}
+
+int tracking_enabled_get(bool *enabled)
+{
+  if (enabled == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  taskENTER_CRITICAL();
+  *enabled = s_tracking_enabled;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
 static int32_t tracking_speed_limit(int32_t speed)
 {
   if (speed > TRACKING_TARGET_SPEED_LIMIT) {
@@ -255,6 +472,7 @@ void tracking_task(void *argument)
 #endif
   int32_t measured_error = INT32_C(0);
   bool line_found;
+  bool enabled;
   int result;
 
   (void)argument;
@@ -270,19 +488,33 @@ void tracking_task(void *argument)
   last_print_time = last_wake_time;
 #endif
   for (;;) {
-    result = serial_monitor_drive_base_speeds_get(
-        &base_speeds.left_speed, &base_speeds.right_speed);
+    result = tracking_enabled_get(&enabled);
+    if ((result == PLATFORM_OK) && !enabled) {
+      control = (struct tracking_control_state){0};
+      result = tracking_inactive_targets_publish();
+      if (result != PLATFORM_OK) {
+        printf("[tracking] stop failed: %d\r\n", result);
+        vTaskDelete(NULL);
+        return;
+      }
+      vTaskDelayUntil(&last_wake_time,
+                      pdMS_TO_TICKS(TRACKING_CONTROL_PERIOD_MS));
+      continue;
+    }
+    if (result == PLATFORM_OK) {
+      result = tracking_base_speeds_get(&base_speeds);
+    }
     if (result == PLATFORM_OK) {
       result = tracking_inputs_sample(inputs, &inputs_state);
     }
     if (result == PLATFORM_OK) {
       line_found = tracking_error_calculate(&inputs_state,
                                              &measured_error);
+      tracking_status_publish(&inputs_state);
       tracking_targets_update(&control, line_found,
                               measured_error, &base_speeds,
                               &targets);
-      result = motor_target_speeds_set(targets.left_speed,
-                                       targets.right_speed);
+      result = tracking_targets_publish(&targets);
     }
     if (result != PLATFORM_OK) {
       (void)motor_target_speeds_set(INT32_C(0), INT32_C(0));

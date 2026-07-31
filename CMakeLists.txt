@@ -74,6 +74,7 @@ set(PROJECT_SOURCES
     layer/application/core/app_rtos.c
     layer/application/core/app_led.c
     layer/application/core/app_key.c
+    layer/application/core/app_mission.c
     layer/application/core/app_oled.c
     layer/application/core/app_motor.c
     layer/application/core/app_encoder.c

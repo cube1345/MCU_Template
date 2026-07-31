@@ -4,6 +4,7 @@
  * @author  weixin
  */
 #include "app_key.h"
+#include "app_mission.h"
 
 #include "board_key.h"
 #include "key_event.h"
@@ -33,6 +34,7 @@ void key_task(void *argument)
   struct key *user_key;
   TickType_t last_wake_time;
   int result;
+  int event;
 
   (void)argument;
 
@@ -59,8 +61,18 @@ void key_task(void *argument)
 
   last_wake_time = xTaskGetTickCount();
   for (;;) {
-    /* 当前示例不消费按键事件，不保存事件统计或错误状态。 */
-    (void)key_event_poll(&s_user_key_event);
+    /* Only release events are forwarded; hold/repeat events stay local. */
+    event = key_event_poll(&s_user_key_event);
+    if (event == KEY_EVENT_SHORT_RELEASE) {
+      result = mission_key_event_post(MISSION_KEY_SHORT_RELEASE);
+    } else if (event == KEY_EVENT_LONG_RELEASE) {
+      result = mission_key_event_post(MISSION_KEY_LONG_RELEASE);
+    } else {
+      result = (event < PLATFORM_OK) ? event : PLATFORM_OK;
+    }
+    if (result != PLATFORM_OK) {
+      printf("[key] event publish failed: %d\r\n", result);
+    }
     vTaskDelayUntil(&last_wake_time,
                     pdMS_TO_TICKS(KEY_PERIOD_MS));
   }

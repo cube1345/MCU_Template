@@ -14,6 +14,7 @@
 #include "app_key.h"
 #include "app_led.h"
 #include "app_motor.h"
+#include "app_mission.h"
 #include "app_oled.h"
 #include "app_serial_monitor.h"
 #include "app_system_stats.h"
@@ -42,6 +43,7 @@
 #define TRACKING_STACK_DEPTH (configMINIMAL_STACK_SIZE)
 #define VISION_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
 #define BALL_CONTROL_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
+#define MISSION_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
 
 /* 所有应用任务优先级均基于 FreeRTOS 空闲任务优先级。 */
 #define LED_PRIORITY (tskIDLE_PRIORITY + 1U)
@@ -54,6 +56,7 @@
 #define TRACKING_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define VISION_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define BALL_CONTROL_PRIORITY (tskIDLE_PRIORITY + 2U)
+#define MISSION_PRIORITY (tskIDLE_PRIORITY + 2U)
 
 /* 防止 tasks_create() 被重复调用后重复创建任务。 */
 static bool s_tasks_created;
@@ -84,6 +87,10 @@ int tasks_create(void)
   if (result != PLATFORM_OK) {
     return result;
   }
+  result = mission_init();
+  if (result != PLATFORM_OK) {
+    return result;
+  }
 
   if (xTaskCreate(serial_monitor_task, "monitor",
                   SERIAL_MONITOR_STACK_DEPTH, NULL,
@@ -101,6 +108,10 @@ int tasks_create(void)
   }
   if (xTaskCreate(key_task, "key", KEY_STACK_DEPTH,
                   NULL, KEY_PRIORITY, NULL) != pdPASS) {
+    return PLATFORM_ERR_IO;
+  }
+  if (xTaskCreate(mission_task, "mission", MISSION_STACK_DEPTH,
+                  NULL, MISSION_PRIORITY, NULL) != pdPASS) {
     return PLATFORM_ERR_IO;
   }
   if (xTaskCreate(oled_task, "oled", OLED_STACK_DEPTH,

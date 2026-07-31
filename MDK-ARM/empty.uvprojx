@@ -771,6 +771,11 @@
               <FilePath>../layer/application/core/app_key.c</FilePath>
             </File>
             <File>
+              <FileName>app_mission.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../layer/application/core/app_mission.c</FilePath>
+            </File>
+            <File>
               <FileName>app_oled.c</FileName>
               <FileType>1</FileType>
               <FilePath>../layer/application/core/app_oled.c</FilePath>

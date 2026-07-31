@@ -18,6 +18,8 @@
 #define KEY_EVENT_STATE_DOUBLE_PRESSED INT32_C(5)
 #define KEY_EVENT_STATE_LONG INT32_C(6)
 #define KEY_EVENT_STATE_REPEAT INT32_C(7)
+#define KEY_EVENT_STATE_SHORT_RELEASE_DEBOUNCE INT32_C(8)
+#define KEY_EVENT_STATE_LONG_RELEASE_DEBOUNCE INT32_C(9)
 
 /**
  * @brief  计算两个毫秒时间戳之间的差值。
@@ -80,11 +82,8 @@ static int poll_debounce(struct key_event *self, bool pressed, uint32_t now)
 static int poll_pressed(struct key_event *self, bool pressed, uint32_t now)
 {
   if (!pressed) {
-    /*
-     * 短按释放后先进入等待窗口。若窗口内没有第二次短按，
-     * 再确认这是一个单击事件。
-     */
-    self->state = KEY_EVENT_STATE_CLICK_WAIT;
+    /* The mission UI acts immediately on the debounced release edge. */
+    self->state = KEY_EVENT_STATE_SHORT_RELEASE_DEBOUNCE;
     self->released_time_ms = now;
     return KEY_EVENT_NONE;
   }
@@ -180,7 +179,8 @@ static int poll_double_pressed(struct key_event *self,
 static int poll_long(struct key_event *self, bool pressed, uint32_t now)
 {
   if (!pressed) {
-    self->state = KEY_EVENT_STATE_RELEASED;
+    self->state = KEY_EVENT_STATE_LONG_RELEASE_DEBOUNCE;
+    self->released_time_ms = now;
     return KEY_EVENT_NONE;
   }
 
@@ -204,7 +204,8 @@ static int poll_long(struct key_event *self, bool pressed, uint32_t now)
 static int poll_repeat(struct key_event *self, bool pressed, uint32_t now)
 {
   if (!pressed) {
-    self->state = KEY_EVENT_STATE_RELEASED;
+    self->state = KEY_EVENT_STATE_LONG_RELEASE_DEBOUNCE;
+    self->released_time_ms = now;
     return KEY_EVENT_NONE;
   }
 
@@ -214,6 +215,38 @@ static int poll_repeat(struct key_event *self, bool pressed, uint32_t now)
     return KEY_EVENT_REPEAT;
   }
 
+  return KEY_EVENT_NONE;
+}
+
+static int poll_short_release_debounce(struct key_event *self,
+                                       bool pressed,
+                                       uint32_t now)
+{
+  if (pressed) {
+    self->state = KEY_EVENT_STATE_PRESSED;
+    return KEY_EVENT_NONE;
+  }
+  if (elapsed_ms(now, self->released_time_ms) >=
+      KEY_EVENT_DEBOUNCE_MS) {
+    self->state = KEY_EVENT_STATE_RELEASED;
+    return KEY_EVENT_SHORT_RELEASE;
+  }
+  return KEY_EVENT_NONE;
+}
+
+static int poll_long_release_debounce(struct key_event *self,
+                                      bool pressed,
+                                      uint32_t now)
+{
+  if (pressed) {
+    self->state = KEY_EVENT_STATE_LONG;
+    return KEY_EVENT_NONE;
+  }
+  if (elapsed_ms(now, self->released_time_ms) >=
+      KEY_EVENT_DEBOUNCE_MS) {
+    self->state = KEY_EVENT_STATE_RELEASED;
+    return KEY_EVENT_LONG_RELEASE;
+  }
   return KEY_EVENT_NONE;
 }
 
@@ -293,6 +326,10 @@ int key_event_poll(struct key_event *self)
     return poll_long(self, pressed, now);
   case KEY_EVENT_STATE_REPEAT:
     return poll_repeat(self, pressed, now);
+  case KEY_EVENT_STATE_SHORT_RELEASE_DEBOUNCE:
+    return poll_short_release_debounce(self, pressed, now);
+  case KEY_EVENT_STATE_LONG_RELEASE_DEBOUNCE:
+    return poll_long_release_debounce(self, pressed, now);
   default:
     self->state = KEY_EVENT_STATE_RELEASED;
     return PLATFORM_ERR_INVALID_STATE;
