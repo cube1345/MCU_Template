@@ -10,8 +10,10 @@
 #include "device/motor/motor.h"
 
 /* WEIXIN允许设置的EMM绝对角度范围，单位为度。 */
-#define BOARD_EMM_V5_POSITION_DEG_MIN (-15.0F)
-#define BOARD_EMM_V5_POSITION_DEG_MAX (15.0F)
+#define BOARD_EMM_V5_POSITION_DEG_MIN (-45.0F)
+#define BOARD_EMM_V5_POSITION_DEG_MAX (45.0F)
+/* EMM编码器原始位置允许的绝对值上限。 */
+#define BOARD_EMM_V5_POSITION_RAW_ABS_LIMIT INT32_C(7000)
 
 /**
  * @brief  绑定板载EMM V5电机对象和其USART6通信资源。
@@ -33,6 +35,19 @@ struct motor *board_emm_v5_get(void);
  * @note   原始位置每65536单位表示电机旋转一圈，仅由EMM任务调用。
  */
 int board_emm_v5_position_read(int32_t *position_raw);
+
+/**
+ * @brief  查询最近一次位置采样是否触发软件限位。
+ * @retval true表示位于正向或负向限位外，false表示位于安全范围内。
+ */
+bool board_emm_v5_position_is_limited(void);
+
+/**
+ * @brief  立即停止当前运动，但保持EMM使能和motor对象启动状态。
+ * @retval PLATFORM_OK表示停止命令发送成功，其他值表示状态或通信错误。
+ * @note   用于软件限位，停止后仍可发送返回安全区的运动命令。
+ */
+int board_emm_v5_motion_stop(void);
 
 /**
  * @brief  将EMM当前位置设置为0度。

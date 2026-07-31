@@ -6,6 +6,7 @@
  */
 #include "board_emm_v5.h"
 
+#include "emm_v5_soft_limit.h"
 #include "emm_v5/emm_v5.h"
 #include "board_uart.h"
 #include "result.h"
@@ -18,16 +19,20 @@
 #define BOARD_EMM_V5_ADDRESS UINT8_C(1)
 /* 快速位置模式的默认运行速度，单位为RPM。 */
 #define BOARD_EMM_V5_POSITION_SPEED_RPM UINT16_C(300)
-/* 0表示由EMM V5驱动器直接起动，不额外做加速度斜坡。 */
-#define BOARD_EMM_V5_ACCELERATION UINT8_C(0)
+/* EMM V5加速度档位：0关闭斜坡；较小的非零值可使位置命令起停更平滑。 */
+#define BOARD_EMM_V5_ACCELERATION UINT8_C(100)
 /* EMM V5命令发送和四字节应答接收的单次超时，单位为ms。 */
 #define BOARD_EMM_V5_TIMEOUT_MS UINT32_C(500)
 /* 1.8度电机、16细分时，位置命令每圈需要3200个脉冲。 */
-#define BOARD_EMM_V5_PULSES_PER_REVOLUTION (3200.0F)
+#define BOARD_EMM_V5_PULSES_PER_REVOLUTION UINT32_C(3200)
 #define BOARD_EMM_V5_DEGREES_PER_REVOLUTION (360.0F)
+/* EMM内置编码器旋转一圈对应的原始位置计数。 */
+#define BOARD_EMM_V5_ENCODER_COUNTS_PER_REVOLUTION UINT32_C(65536)
 
 /* 板级静态EMM V5具体对象，其生命周期覆盖整个固件运行期。 */
 static struct emm_v5 s_emm_v5;
+/* 包装原始EMM对象并统一拦截速度与位置命令的软件限位修饰器。 */
+static struct emm_v5_soft_limit s_emm_v5_soft_limit;
 /* 防止重复执行motor_bind()造成对象重复绑定。 */
 static bool s_emm_v5_bound;
 
@@ -48,6 +53,13 @@ int board_emm_v5_init(void)
     .response_required = true,
     .reversed = false,
   };
+  static const struct emm_v5_soft_limit_config soft_limit_config = {
+    .position_raw_abs_limit = BOARD_EMM_V5_POSITION_RAW_ABS_LIMIT,
+    .encoder_counts_per_revolution =
+        BOARD_EMM_V5_ENCODER_COUNTS_PER_REVOLUTION,
+    .command_pulses_per_revolution =
+        BOARD_EMM_V5_PULSES_PER_REVOLUTION,
+  };
   struct uart *uart;
   int result;
 
@@ -63,10 +75,18 @@ int board_emm_v5_init(void)
     return PLATFORM_ERR_INVALID_STATE;
   }
   result = emm_v5_init(&s_emm_v5, "emm_v5", uart, &config);
-  if (result == PLATFORM_OK) {
-    s_emm_v5_bound = true;
+  if (result != PLATFORM_OK) {
+    return result;
   }
-  return result;
+  result = emm_v5_soft_limit_init(&s_emm_v5_soft_limit,
+                                  "emm_v5_limited",
+                                  &s_emm_v5,
+                                  &soft_limit_config);
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  s_emm_v5_bound = true;
+  return PLATFORM_OK;
 }
 
 /**
@@ -75,7 +95,8 @@ int board_emm_v5_init(void)
  */
 struct motor *board_emm_v5_get(void)
 {
-  return s_emm_v5_bound ? emm_v5_get_motor(&s_emm_v5) : NULL;
+  return s_emm_v5_bound ?
+         emm_v5_soft_limit_get_motor(&s_emm_v5_soft_limit) : NULL;
 }
 
 /**
@@ -89,7 +110,23 @@ int board_emm_v5_position_read(int32_t *position_raw)
   if (!s_emm_v5_bound) {
     return PLATFORM_ERR_INVALID_STATE;
   }
-  return emm_v5_read_position(&s_emm_v5, position_raw);
+  return emm_v5_soft_limit_position_read(&s_emm_v5_soft_limit,
+                                         position_raw);
+}
+
+bool board_emm_v5_position_is_limited(void)
+{
+  return s_emm_v5_bound &&
+         (emm_v5_soft_limit_state_get(&s_emm_v5_soft_limit) !=
+          EMM_V5_SOFT_LIMIT_NONE);
+}
+
+int board_emm_v5_motion_stop(void)
+{
+  if (!s_emm_v5_bound) {
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+  return emm_v5_soft_limit_motion_stop(&s_emm_v5_soft_limit);
 }
 
 int board_emm_v5_position_clear(void)
@@ -97,7 +134,7 @@ int board_emm_v5_position_clear(void)
   if (!s_emm_v5_bound) {
     return PLATFORM_ERR_INVALID_STATE;
   }
-  return emm_v5_position_clear(&s_emm_v5);
+  return emm_v5_soft_limit_position_clear(&s_emm_v5_soft_limit);
 }
 
 int board_emm_v5_position_deg_set(float position_deg)
@@ -114,9 +151,10 @@ int board_emm_v5_position_deg_set(float position_deg)
     return PLATFORM_ERR_INVALID_STATE;
   }
 
-  pulse_value = position_deg * BOARD_EMM_V5_PULSES_PER_REVOLUTION /
+  pulse_value = position_deg *
+                (float)BOARD_EMM_V5_PULSES_PER_REVOLUTION /
                 BOARD_EMM_V5_DEGREES_PER_REVOLUTION;
   pulse = (int32_t)(pulse_value >= 0.0F ?
                     pulse_value + 0.5F : pulse_value - 0.5F);
-  return emm_v5_move_absolute(&s_emm_v5, pulse);
+  return emm_v5_soft_limit_move_absolute(&s_emm_v5_soft_limit, pulse);
 }

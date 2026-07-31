@@ -52,6 +52,13 @@ struct uart *stm32f4_uart_interrupt_create(
 void stm32f4_usart1_irq_handler(void);
 
 /**
+ * @brief  处理 USART3 全局中断。
+ * @retval None。
+ * @note   仅由 USART3_IRQHandler() 在中断上下文调用。
+ */
+void stm32f4_usart3_irq_handler(void);
+
+/**
  * @brief  处理 USART6 全局中断。
  * @param  None。
  * @retval None。

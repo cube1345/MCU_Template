@@ -16,6 +16,15 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include <stddef.h>
+#include <stdio.h>
+
+/* Kept in RAM so a debugger can inspect the failure even if UART output fails. */
+volatile TaskHandle_t g_freertos_failed_task;
+const char * volatile g_freertos_failed_task_name;
+volatile size_t g_freertos_failed_free_heap;
+volatile size_t g_freertos_failed_minimum_heap;
+
 void MX_FREERTOS_Init(void)
 {
   /* USER CODE BEGIN Init */
@@ -31,8 +40,11 @@ void MX_FREERTOS_Init(void)
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
-  (void)xTask;
-  (void)pcTaskName;
+  g_freertos_failed_task = xTask;
+  g_freertos_failed_task_name = pcTaskName;
+
+  printf("[fatal] FreeRTOS stack overflow: task=%s\r\n",
+         (pcTaskName != NULL) ? pcTaskName : "<unknown>");
 
   taskDISABLE_INTERRUPTS();
   for (;;)
@@ -42,6 +54,13 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 void vApplicationMallocFailedHook(void)
 {
+  g_freertos_failed_free_heap = xPortGetFreeHeapSize();
+  g_freertos_failed_minimum_heap = xPortGetMinimumEverFreeHeapSize();
+
+  printf("[fatal] FreeRTOS malloc failed: free=%lu min_ever=%lu bytes\r\n",
+         (unsigned long)g_freertos_failed_free_heap,
+         (unsigned long)g_freertos_failed_minimum_heap);
+
   taskDISABLE_INTERRUPTS();
   for (;;)
   {

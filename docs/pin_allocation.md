@@ -2,7 +2,7 @@
 
 本文记录当前固件对 STM32F407VE 引脚的实际占用和板级预留情况。
 
-- 最后核对日期：2026-07-29
+- 最后核对日期：2026-07-30
 - 硬件目标：STM32F407VE
 - 运行入口：`main()` -> `tasks_create()` -> FreeRTOS 调度器
 - 主要依据：`empty.ioc`、`layer/board/stm32f407/` 和
@@ -48,6 +48,8 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 | PB2 | 蓝色 LED | GPIO | 输出，低电平点亮 | 1000 ms 周期翻转 | `board_led.c` |
 | PB6 | OLED SCL | I2C1_SCL | AF4，开漏 | OLED 阻塞通信 | `board_i2c.c` |
 | PB7 | OLED SDA | I2C1_SDA | AF4，开漏 | OLED 阻塞通信 | `board_i2c.c` |
+| PB10 | 视觉上位机 TX | USART3_TX | AF7，推挽 | 115200 baud | `board_uart.c` |
+| PB11 | 视觉上位机 RX | USART3_RX | AF7 | 115200 baud，中断接收 | `board_uart.c` |
 | PC5 | 红色 LED | GPIO | 输出，低电平点亮 | 已配置，当前保持熄灭 | `board_led.c` |
 | PC6 | EMM V5 TX | USART6_TX | AF8，推挽 | 步进电机低速调速任务 | `board_uart.c` |
 | PC7 | EMM V5 RX | USART6_RX | AF8 | 步进电机低速调速任务 | `board_uart.c` |
@@ -64,16 +66,6 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 
 说明：即使 PC5 当前没有有效输出，它已经被初始化为
 指定用途，仍应视为占用，不能交给其他模块。
-
-## 已分配但默认未启用
-
-| 引脚 | 预定用途 | 外设或通道 | 未启用原因 | 启用入口 |
-| --- | --- | --- | --- | --- |
-| PB10 | 备用硬件 I2C SCL | I2C2_SCL，AF4 | OLED 已改用 I2C1 | `board_i2c2_init()` |
-| PB11 | 备用硬件 I2C SDA | I2C2_SDA，AF4 | OLED 已改用 I2C1 | `board_i2c2_init()` |
-
-这些引脚虽然当前启动后没有配置硬件，但 Board 层已经分配了明确用途。新增功能
-需要占用这些引脚时，应先修改或删除原有 Board 配置，而不是直接复用。
 
 ## Platform 后端候选映射
 
@@ -95,7 +87,7 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 3. TIM2 的 CH1 至 CH4 共享同一个定时器频率，四路 PWM 不能分别设置不同频率；当前也不能再把 TIM2 配置为编码器模式。
 4. PC6/PC7 当前用于 USART6。新增 TIM3 等复用映射时必须避让。
 5. USART6 RX 使用逐字节中断环形缓冲，TX 使用 DMA2 Stream6/Channel5。
-6. OLED 当前使用 I2C1 的 PB6/PB7，不再使用 I2C2 的 PB10/PB11。
+6. PB10/PB11 当前用于 USART3 视觉通信，不能再复用为 I2C2。
 7. USART6_TX 固定使用 DMA2 Stream6/Channel5；新增 DMA2 功能时必须避让。
 8. 右排针 15 至 8 号位已连续分配为八路循迹数字输入，通道顺序不得在应用层重复解释。
 
@@ -107,8 +99,8 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 `Core/Src/usart.c` 和 `Core/Src/gpio.c` 是历史生成文件，未加入当前 Keil 和 CMake
 源文件列表，因此其中出现的引脚不能作为当前占用依据。
 
-`Core/Src/stm32f4xx_it.c` 中的 USART1 中断入口属于当前手写集成。重新用 CubeMX
-生成代码前必须确认该入口没有被覆盖。
+`Core/Src/stm32f4xx_it.c` 中的 USART1 和 USART3 中断入口属于当前手写集成。
+重新用 CubeMX 生成代码前必须确认这些入口没有被覆盖。
 
 ## 维护规则
 

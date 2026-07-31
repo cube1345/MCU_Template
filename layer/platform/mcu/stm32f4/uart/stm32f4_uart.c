@@ -89,7 +89,9 @@ struct stm32f4_uart_interrupt {
 static struct stm32f4_uart_blocking g_uart1_blocking;
 static struct stm32f4_uart_blocking g_uart6_blocking;
 static struct stm32f4_uart_interrupt g_uart1_interrupt;
+static struct stm32f4_uart_interrupt g_uart3_interrupt;
 static int32_t g_uart1_mode;
+static int32_t g_uart3_mode;
 static int32_t g_uart6_mode;
 
 /* STM32F407 USART1 的合法 TX/RX 复用引脚，数据来自芯片复用功能表。 */
@@ -102,6 +104,10 @@ static const struct stm32f4_uart_pin_map g_uart_pin_maps[] = {
    GPIOB, GPIO_PIN_6, GPIO_AF7_USART1},
   {STM32F4_UART1, STM32F4_UART_SIGNAL_RX, STM32F4_PIN_PB7,
    GPIOB, GPIO_PIN_7, GPIO_AF7_USART1},
+  {STM32F4_UART3, STM32F4_UART_SIGNAL_TX, STM32F4_PIN_PB10,
+   GPIOB, GPIO_PIN_10, GPIO_AF7_USART3},
+  {STM32F4_UART3, STM32F4_UART_SIGNAL_RX, STM32F4_PIN_PB11,
+   GPIOB, GPIO_PIN_11, GPIO_AF7_USART3},
   {STM32F4_UART6, STM32F4_UART_SIGNAL_TX, STM32F4_PIN_PC6,
    GPIOC, GPIO_PIN_6, GPIO_AF8_USART6},
   {STM32F4_UART6, STM32F4_UART_SIGNAL_RX, STM32F4_PIN_PC7,
@@ -178,6 +184,7 @@ static bool stm32f4_uart_config_is_valid(
 {
   if ((config == NULL) || (config->name == NULL) ||
       ((config->id != STM32F4_UART1) &&
+       (config->id != STM32F4_UART3) &&
        (config->id != STM32F4_UART6)) ||
       (config->baud_rate == 0U) ||
       (config->timeout_ms == 0U)) {
@@ -200,7 +207,13 @@ static int stm32f4_uart_claim(int32_t id, int32_t mode)
 {
   int32_t *current_mode;
 
-  current_mode = (id == STM32F4_UART1) ? &g_uart1_mode : &g_uart6_mode;
+  if (id == STM32F4_UART1) {
+    current_mode = &g_uart1_mode;
+  } else if (id == STM32F4_UART3) {
+    current_mode = &g_uart3_mode;
+  } else {
+    current_mode = &g_uart6_mode;
+  }
   if ((*current_mode != STM32F4_UART_MODE_NONE) &&
       (*current_mode != mode)) {
     return PLATFORM_ERR_INVALID_STATE;
@@ -219,7 +232,13 @@ static void stm32f4_uart_release(int32_t id, int32_t mode)
 {
   int32_t *current_mode;
 
-  current_mode = (id == STM32F4_UART1) ? &g_uart1_mode : &g_uart6_mode;
+  if (id == STM32F4_UART1) {
+    current_mode = &g_uart1_mode;
+  } else if (id == STM32F4_UART3) {
+    current_mode = &g_uart3_mode;
+  } else {
+    current_mode = &g_uart6_mode;
+  }
   if (*current_mode == mode) {
     *current_mode = STM32F4_UART_MODE_NONE;
   }
@@ -364,6 +383,43 @@ static int stm32f4_uart6_tx_dma_stop(
   return PLATFORM_OK;
 }
 
+static IRQn_Type stm32f4_uart_irq_get(int32_t id)
+{
+  if (id == STM32F4_UART1) {
+    return USART1_IRQn;
+  }
+  if (id == STM32F4_UART3) {
+    return USART3_IRQn;
+  }
+  return USART6_IRQn;
+}
+
+static void stm32f4_uart_clock_enable(UART_HandleTypeDef *handle,
+                                      int32_t id)
+{
+  if (id == STM32F4_UART1) {
+    __HAL_RCC_USART1_CLK_ENABLE();
+    handle->Instance = USART1;
+  } else if (id == STM32F4_UART3) {
+    __HAL_RCC_USART3_CLK_ENABLE();
+    handle->Instance = USART3;
+  } else {
+    __HAL_RCC_USART6_CLK_ENABLE();
+    handle->Instance = USART6;
+  }
+}
+
+static void stm32f4_uart_clock_disable(int32_t id)
+{
+  if (id == STM32F4_UART1) {
+    __HAL_RCC_USART1_CLK_DISABLE();
+  } else if (id == STM32F4_UART3) {
+    __HAL_RCC_USART3_CLK_DISABLE();
+  } else {
+    __HAL_RCC_USART6_CLK_DISABLE();
+  }
+}
+
 /**
  * @brief  启动指定 UART 控制器的公共硬件资源。
  * @param  handle STM32 HAL UART 句柄。
@@ -381,6 +437,7 @@ static int stm32f4_uart_hardware_start(
 {
   const struct stm32f4_uart_pin_map *tx_map;
   const struct stm32f4_uart_pin_map *rx_map;
+  IRQn_Type irq;
 
   if ((handle == NULL) || !stm32f4_uart_config_is_valid(config)) {
     return PLATFORM_ERR_INVALID_CONFIGURATION;
@@ -391,13 +448,7 @@ static int stm32f4_uart_hardware_start(
                                  config->rx_pin);
   stm32f4_uart_gpio_init(tx_map, rx_map);
 
-  if (config->id == STM32F4_UART1) {
-    __HAL_RCC_USART1_CLK_ENABLE();
-    handle->Instance = USART1;
-  } else {
-    __HAL_RCC_USART6_CLK_ENABLE();
-    handle->Instance = USART6;
-  }
+  stm32f4_uart_clock_enable(handle, config->id);
   handle->Init.BaudRate = config->baud_rate;
   handle->Init.WordLength = UART_WORDLENGTH_8B;
   handle->Init.StopBits = UART_STOPBITS_1;
@@ -406,19 +457,14 @@ static int stm32f4_uart_hardware_start(
   handle->Init.HwFlowCtl = UART_HWCONTROL_NONE;
   handle->Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(handle) != HAL_OK) {
-    if (config->id == STM32F4_UART1) {
-      __HAL_RCC_USART1_CLK_DISABLE();
-    } else {
-      __HAL_RCC_USART6_CLK_DISABLE();
-    }
+    stm32f4_uart_clock_disable(config->id);
     stm32f4_uart_gpio_deinit(tx_map, rx_map);
     return PLATFORM_ERR_IO;
   }
   if (enable_irq) {
-    HAL_NVIC_SetPriority((config->id == STM32F4_UART1) ? USART1_IRQn :
-                         USART6_IRQn, config->irq_priority, 0U);
-    HAL_NVIC_EnableIRQ((config->id == STM32F4_UART1) ? USART1_IRQn :
-                       USART6_IRQn);
+    irq = stm32f4_uart_irq_get(config->id);
+    HAL_NVIC_SetPriority(irq, config->irq_priority, 0U);
+    HAL_NVIC_EnableIRQ(irq);
   }
   return PLATFORM_OK;
 }
@@ -440,6 +486,7 @@ static int stm32f4_uart_hardware_stop(
 {
   const struct stm32f4_uart_pin_map *tx_map;
   const struct stm32f4_uart_pin_map *rx_map;
+  IRQn_Type irq;
 
   if ((handle == NULL) || !stm32f4_uart_config_is_valid(config)) {
     return PLATFORM_ERR_INVALID_CONFIGURATION;
@@ -448,22 +495,17 @@ static int stm32f4_uart_hardware_stop(
                                  config->tx_pin);
   rx_map = stm32f4_uart_pin_find(config->id, STM32F4_UART_SIGNAL_RX,
                                  config->rx_pin);
+  irq = stm32f4_uart_irq_get(config->id);
   if (irq_enabled) {
-    HAL_NVIC_DisableIRQ((config->id == STM32F4_UART1) ? USART1_IRQn :
-                        USART6_IRQn);
+    HAL_NVIC_DisableIRQ(irq);
   }
   if (HAL_UART_DeInit(handle) != HAL_OK) {
     if (irq_enabled) {
-      HAL_NVIC_EnableIRQ((config->id == STM32F4_UART1) ? USART1_IRQn :
-                         USART6_IRQn);
+      HAL_NVIC_EnableIRQ(irq);
     }
     return PLATFORM_ERR_IO;
   }
-  if (config->id == STM32F4_UART1) {
-    __HAL_RCC_USART1_CLK_DISABLE();
-  } else {
-    __HAL_RCC_USART6_CLK_DISABLE();
-  }
+  stm32f4_uart_clock_disable(config->id);
   stm32f4_uart_gpio_deinit(tx_map, rx_map);
   return PLATFORM_OK;
 }
@@ -896,6 +938,9 @@ struct uart *stm32f4_uart_blocking_create(
   if (!stm32f4_uart_config_is_valid(config)) {
     return NULL;
   }
+  if (config->id == STM32F4_UART3) {
+    return NULL;
+  }
   object = (config->id == STM32F4_UART1) ?
            &g_uart1_blocking : &g_uart6_blocking;
   object->base.ops = &g_blocking_base_ops;
@@ -915,16 +960,20 @@ struct uart *stm32f4_uart_blocking_create(
 struct uart *stm32f4_uart_interrupt_create(
     const struct stm32f4_uart_config *config)
 {
+  struct stm32f4_uart_interrupt *object;
+
   if (!stm32f4_uart_config_is_valid(config) ||
-      (config->id != STM32F4_UART1)) {
+      (config->id == STM32F4_UART6)) {
     return NULL;
   }
-  g_uart1_interrupt.base.ops = &g_interrupt_base_ops;
-  g_uart1_interrupt.base.blocking_ops = NULL;
-  g_uart1_interrupt.base.interrupt_ops = &g_interrupt_ops;
-  g_uart1_interrupt.base.name = config->name;
-  g_uart1_interrupt.config = config;
-  return &g_uart1_interrupt.base;
+  object = (config->id == STM32F4_UART1) ?
+           &g_uart1_interrupt : &g_uart3_interrupt;
+  object->base.ops = &g_interrupt_base_ops;
+  object->base.blocking_ops = NULL;
+  object->base.interrupt_ops = &g_interrupt_ops;
+  object->base.name = config->name;
+  object->config = config;
+  return &object->base;
 }
 
 /**
@@ -1015,6 +1064,14 @@ void stm32f4_usart1_irq_handler(void)
   }
 }
 
+void stm32f4_usart3_irq_handler(void)
+{
+  if ((g_uart3_mode == STM32F4_UART_MODE_INTERRUPT) &&
+      g_uart3_interrupt.base.initialized) {
+    HAL_UART_IRQHandler(&g_uart3_interrupt.handle);
+  }
+}
+
 /**
  * @brief  将 USART6 全局中断分发给 HAL UART 驱动。
  * @param  None。
@@ -1048,26 +1105,28 @@ void stm32f4_usart6_tx_dma_irq_handler(void)
  * @note   该函数会先清理挂起状态，再调用用户回调，避免回调中重入时
  *         看到旧的接收上下文。
  */
-static void stm32f4_uart_interrupt_rx_finish(int result)
+static void stm32f4_uart_interrupt_rx_finish(
+    struct stm32f4_uart_interrupt *self,
+    int result)
 {
   uart_interrupt_callback_t callback;
   void *context;
   uint8_t *data;
   uint16_t size;
 
-  if (!g_uart1_interrupt.rx_pending) {
+  if ((self == NULL) || !self->rx_pending) {
     return;
   }
-  callback = g_uart1_interrupt.rx_callback;
-  context = g_uart1_interrupt.rx_context;
-  data = g_uart1_interrupt.rx_data;
-  size = g_uart1_interrupt.rx_size;
-  g_uart1_interrupt.rx_pending = false;
-  g_uart1_interrupt.rx_callback = NULL;
-  g_uart1_interrupt.rx_context = NULL;
-  g_uart1_interrupt.rx_data = NULL;
-  g_uart1_interrupt.rx_size = 0U;
-  callback(&g_uart1_interrupt.base, data, size, result, context);
+  callback = self->rx_callback;
+  context = self->rx_context;
+  data = self->rx_data;
+  size = self->rx_size;
+  self->rx_pending = false;
+  self->rx_callback = NULL;
+  self->rx_context = NULL;
+  self->rx_data = NULL;
+  self->rx_size = 0U;
+  callback(&self->base, data, size, result, context);
 }
 
 /**
@@ -1081,7 +1140,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *handle)
   if (handle == &g_uart1_blocking.handle) {
     stm32f4_uart_blocking_rx_complete(&g_uart1_blocking);
   } else if (handle == &g_uart1_interrupt.handle) {
-    stm32f4_uart_interrupt_rx_finish(PLATFORM_OK);
+    stm32f4_uart_interrupt_rx_finish(&g_uart1_interrupt,
+                                     PLATFORM_OK);
+  } else if (handle == &g_uart3_interrupt.handle) {
+    stm32f4_uart_interrupt_rx_finish(&g_uart3_interrupt,
+                                     PLATFORM_OK);
   } else if (handle == &g_uart6_blocking.handle) {
     stm32f4_uart_blocking_rx_complete(&g_uart6_blocking);
   }
@@ -1113,7 +1176,11 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *handle)
   if (handle == &g_uart1_blocking.handle) {
     stm32f4_uart_blocking_rx_recover(&g_uart1_blocking);
   } else if (handle == &g_uart1_interrupt.handle) {
-    stm32f4_uart_interrupt_rx_finish(PLATFORM_ERR_IO);
+    stm32f4_uart_interrupt_rx_finish(&g_uart1_interrupt,
+                                     PLATFORM_ERR_IO);
+  } else if (handle == &g_uart3_interrupt.handle) {
+    stm32f4_uart_interrupt_rx_finish(&g_uart3_interrupt,
+                                     PLATFORM_ERR_IO);
   } else if (handle == &g_uart6_blocking.handle) {
     error_code = handle->ErrorCode;
     if (g_uart6_blocking.tx_dma_active &&

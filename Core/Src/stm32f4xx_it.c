@@ -221,6 +221,11 @@ void USART1_IRQHandler(void)
   stm32f4_usart1_irq_handler();
 }
 
+void USART3_IRQHandler(void)
+{
+  stm32f4_usart3_irq_handler();
+}
+
 /**
   * @brief  处理 USART6 发送使用的 DMA2 Stream6 全局中断。
   * @param  None。

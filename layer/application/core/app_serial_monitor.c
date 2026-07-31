@@ -9,6 +9,7 @@
  */
 #include "app_serial_monitor.h"
 
+#include "app_ball_control.h"
 #include "app_system_stats.h"
 
 #include "board_drive.h"
@@ -31,13 +32,12 @@
 #define SERIAL_MONITOR_FIRMWARE_VERSION UINT32_C(10000)
 /* UART 单次协议响应的发送超时，单位为毫秒。 */
 #define SERIAL_MONITOR_TX_TIMEOUT_MS UINT32_C(250)
-/* UART 忙时的最大重试次数。 */
 #define SERIAL_MONITOR_TX_RETRY_COUNT UINT32_C(5)
 /* UART 忙重试间隔，单位为毫秒。 */
 #define SERIAL_MONITOR_TX_RETRY_DELAY_MS UINT32_C(1)
-/* UART 中断接收链续接失败后的重试间隔，单位为毫秒。 */
+/* UART中断接收链续接失败后的重试间隔，单位为毫秒。 */
 #define SERIAL_MONITOR_RX_ERROR_DELAY_MS UINT32_C(10)
-/* 接收事件队列长度；在 115200 baud 下可缓存约 11 ms 的连续数据。 */
+/* 接收事件队列长度；在115200 baud下可缓存约11 ms的连续数据。 */
 #define SERIAL_MONITOR_RX_QUEUE_LENGTH ((UBaseType_t)128U)
 /* 协议响应前置 CRLF 的字节数量。 */
 #define SERIAL_MONITOR_LINE_PREFIX_SIZE UINT16_C(2)
@@ -52,15 +52,17 @@
 #endif
 /* 左右轮默认基础速度，保证默认平均目标速度为 80000 count/s。 */
 #define SERIAL_MONITOR_DRIVE_SPEED_DEFAULT INT32_C(60000)
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
-/* WEIXIN 左右轮速度波形的发送周期，单位为毫秒。 */
+/* 小球位置环允许通过WEIXIN设置的增益范围。 */
+#define SERIAL_MONITOR_BALL_POSITION_GAIN_MIN (-100.0)
+#define SERIAL_MONITOR_BALL_POSITION_GAIN_MAX (100.0)
+#if SERIAL_MONITOR_WAVE_ENABLE
+/* WEIXIN所有已启用波形通道的发送周期，单位为毫秒。 */
 #define SERIAL_MONITOR_WAVE_PERIOD_MS UINT32_C(100)
-/* 单行左右轮速度波形文本缓冲区容量。 */
-#define SERIAL_MONITOR_WAVE_CAPACITY UINT16_C(96)
+/* 单行所有已启用波形通道的文本缓冲区容量。 */
+#define SERIAL_MONITOR_WAVE_CAPACITY UINT16_C(256)
 #define SERIAL_MONITOR_RX_WAIT_TICKS \
   pdMS_TO_TICKS(SERIAL_MONITOR_WAVE_PERIOD_MS)
 #else
-/* 关闭波形后，串口任务只在收到事件时唤醒。 */
 #define SERIAL_MONITOR_RX_WAIT_TICKS portMAX_DELAY
 #endif
 
@@ -74,6 +76,10 @@ static float s_drive_speed_ki = BOARD_DRIVE_SPEED_KI_DEFAULT;
 static int32_t s_drive_left_speed = SERIAL_MONITOR_DRIVE_SPEED_DEFAULT;
 /* 循迹任务读取的右轮基础速度，单位为编码器计数每秒。 */
 static int32_t s_drive_right_speed = SERIAL_MONITOR_DRIVE_SPEED_DEFAULT;
+/* WEIXIN设置的小球位置环增益，由球控任务在周期边界应用。 */
+static float s_ball_position_kp = BALL_CONTROL_POSITION_KP_DEFAULT;
+static float s_ball_position_ki = BALL_CONTROL_POSITION_KI_DEFAULT;
+static float s_ball_position_kd = BALL_CONTROL_POSITION_KD_DEFAULT;
 /* 上位机请求的EMM绝对位置，单位为度。 */
 static float s_emm_position_deg;
 /* UART 发送最终失败次数，只由本任务更新。 */
@@ -88,31 +94,44 @@ static int32_t s_wave_right_speed;
 /* 标记电机任务是否已经发布过有效速度快照。 */
 static bool s_wave_speed_valid;
 #endif
+#if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
+/* 球控任务发布的视觉小球原始速度快照，单位为像素每帧。 */
+static int8_t s_wave_ball_velocity;
+/* 球控任务发布的小球低通滤波速度快照，单位为像素每帧。 */
+static float s_wave_ball_filtered_velocity;
+/* 标记球控任务是否已经发布过有效小球速度快照。 */
+static bool s_wave_ball_velocity_valid;
+/* 球控PID最近一次写入EMM邮箱的整数目标速度，单位为RPM。 */
+static int32_t s_wave_emm_speed_rpm;
+/* 球控目标默认静止，先发布0以便上位机启动时立即注册该波形通道。 */
+static bool s_wave_emm_speed_valid = true;
+#endif
+#if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
+/* 球控任务发布的位置环目标和视觉测量位置，单位为像素。 */
+static int16_t s_wave_ball_target_x;
+static int16_t s_wave_ball_position_x;
+static float s_wave_ball_filtered_x;
+static bool s_wave_ball_position_valid;
+#endif
 /* WEIXIN 协议组件对象，只由串口通信任务访问。 */
 static struct weixin_protocol s_protocol;
 /* 单次 UART 写入使用的完整响应缓冲区。 */
 static uint8_t s_tx_buffer[SERIAL_MONITOR_TX_CAPACITY];
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+#if SERIAL_MONITOR_WAVE_ENABLE
 /* 串口任务组装 WEIXIN 波形行时使用的静态缓冲区。 */
 static char s_wave_buffer[SERIAL_MONITOR_WAVE_CAPACITY];
 #endif
-/* 中断每次接收一个字节时使用的静态存储，接收链存续期间保持有效。 */
+/* 中断每次接收一个字节时使用的静态存储。 */
 static uint8_t s_rx_byte;
-/* ISR 向串口任务传递接收结果的动态 FreeRTOS 队列。 */
+/* ISR向串口任务传递接收结果的FreeRTOS队列。 */
 static QueueHandle_t s_rx_queue;
-/* 队列溢出时置位，任务据此丢弃当前残缺命令直到下一个行结束符。 */
 static volatile bool s_rx_queue_overflow;
-/* ISR 中续接接收失败时置位，由任务上下文负责重试。 */
 static volatile bool s_rx_rearm_required;
 
-/**
- * @brief 描述一次 UART 中断接收产生的字节事件。
- */
 struct serial_monitor_rx_event {
-  uint8_t byte;           /* 接收成功时的字节值。 */
-  int8_t result;          /* PLATFORM_OK 或可容纳于 int8_t 的接收错误码。 */
+  uint8_t byte;
+  int8_t result;
 };
-
 /* 默认协议向上位机公开的安全参数表。 */
 static const struct weixin_param s_params[] = {
   {
@@ -158,6 +177,30 @@ static const struct weixin_param s_params[] = {
   },
 #endif
   {
+    .name = "ball.position_kp",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_position_kp,
+    .minimum = SERIAL_MONITOR_BALL_POSITION_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_POSITION_GAIN_MAX,
+    .writable = true,
+  },
+  {
+    .name = "ball.position_ki",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_position_ki,
+    .minimum = SERIAL_MONITOR_BALL_POSITION_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_POSITION_GAIN_MAX,
+    .writable = true,
+  },
+  {
+    .name = "ball.position_kd",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_ball_position_kd,
+    .minimum = SERIAL_MONITOR_BALL_POSITION_GAIN_MIN,
+    .maximum = SERIAL_MONITOR_BALL_POSITION_GAIN_MAX,
+    .writable = true,
+  },
+  {
     .name = "emm.position_deg",
     .type = WEIXIN_PARAM_TYPE_FLOAT,
     .value = &s_emm_position_deg,
@@ -200,6 +243,23 @@ int serial_monitor_drive_speed_gains_get(float *speed_kp,
   taskENTER_CRITICAL();
   *speed_kp = s_drive_speed_kp;
   *speed_ki = s_drive_speed_ki;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int serial_monitor_ball_position_gains_get(float *position_kp,
+                                           float *position_ki,
+                                           float *position_kd)
+{
+  if ((position_kp == NULL) || (position_ki == NULL) ||
+      (position_kd == NULL)) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+
+  taskENTER_CRITICAL();
+  *position_kp = s_ball_position_kp;
+  *position_ki = s_ball_position_ki;
+  *position_kd = s_ball_position_kd;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
@@ -282,6 +342,112 @@ static bool serial_monitor_drive_speeds_snapshot_get(
 }
 #endif
 
+#if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
+/**
+ * @brief  发布小球原始速度与低通结果，供WEIXIN波形协议发送。
+ * @param  velocity 小球原始速度，单位为像素每帧。
+ * @param  filtered_velocity 小球低通滤波速度，单位为像素每帧。
+ * @retval None。
+ * @note   临界区只保护速度快照和有效标志，不执行串口操作。
+ */
+void serial_monitor_ball_velocities_publish(int8_t velocity,
+                                            float filtered_velocity)
+{
+  taskENTER_CRITICAL();
+  s_wave_ball_velocity = velocity;
+  s_wave_ball_filtered_velocity = filtered_velocity;
+  s_wave_ball_velocity_valid = true;
+  taskEXIT_CRITICAL();
+}
+
+/**
+ * @brief  获取最近一次视觉小球原始速度快照。
+ * @param  velocity 用于接收小球原始速度的变量，单位为像素每帧。
+ * @param  filtered_velocity 用于接收低通速度的变量，单位为像素每帧。
+ * @return true表示存在有效快照，false表示球控任务尚未发布。
+ */
+static bool serial_monitor_ball_velocities_snapshot_get(
+    int8_t *velocity,
+    float *filtered_velocity)
+{
+  bool valid;
+
+  taskENTER_CRITICAL();
+  valid = s_wave_ball_velocity_valid;
+  *velocity = s_wave_ball_velocity;
+  *filtered_velocity = s_wave_ball_filtered_velocity;
+  taskEXIT_CRITICAL();
+  return valid;
+}
+
+/**
+ * @brief  发布球控PID写入EMM邮箱的整数目标速度，供WEIXIN波形协议发送。
+ * @param  speed_rpm PID浮点输出取整后的目标速度，单位为RPM。
+ * @retval None。
+ * @note   临界区只保护速度快照和有效标志，不执行串口操作。
+ */
+void serial_monitor_ball_speed_rpm_publish(int32_t speed_rpm)
+{
+  taskENTER_CRITICAL();
+  s_wave_emm_speed_rpm = speed_rpm;
+  s_wave_emm_speed_valid = true;
+  taskEXIT_CRITICAL();
+}
+
+/**
+ * @brief  获取最近一次球控PID写入EMM邮箱的整数目标速度快照。
+ * @param  speed_rpm 用于接收目标速度的变量，单位为RPM。
+ * @return true表示存在有效快照，false表示EMM任务尚未发布。
+ */
+static bool serial_monitor_emm_speed_snapshot_get(int32_t *speed_rpm)
+{
+  bool valid;
+
+  taskENTER_CRITICAL();
+  valid = s_wave_emm_speed_valid;
+  *speed_rpm = s_wave_emm_speed_rpm;
+  taskEXIT_CRITICAL();
+  return valid;
+}
+#endif
+
+#if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
+/**
+ * @brief  发布小球位置环快照，供WEIXIN波形协议发送。
+ * @param  target_x 目标位置，单位为像素。
+ * @param  measured_x 视觉测量位置，单位为像素。
+ * @param  filtered_x 低通滤波后的位置，单位为像素。
+ * @retval None。
+ */
+void serial_monitor_ball_positions_publish(int16_t target_x,
+                                           int16_t measured_x,
+                                           float filtered_x)
+{
+  taskENTER_CRITICAL();
+  s_wave_ball_target_x = target_x;
+  s_wave_ball_position_x = measured_x;
+  s_wave_ball_filtered_x = filtered_x;
+  s_wave_ball_position_valid = true;
+  taskEXIT_CRITICAL();
+}
+
+static bool serial_monitor_ball_positions_snapshot_get(
+    int16_t *target_x,
+    int16_t *measured_x,
+    float *filtered_x)
+{
+  bool valid;
+
+  taskENTER_CRITICAL();
+  valid = s_wave_ball_position_valid;
+  *target_x = s_wave_ball_target_x;
+  *measured_x = s_wave_ball_position_x;
+  *filtered_x = s_wave_ball_filtered_x;
+  taskEXIT_CRITICAL();
+  return valid;
+}
+#endif
+
 /**
  * @brief  饱和递增 32 位错误计数器。
  * @param  counter：待更新的错误计数器。
@@ -294,12 +460,6 @@ static void serial_monitor_error_increment(uint32_t *counter)
   }
 }
 
-/**
- * @brief  原子读取并清除一个由 USART1 ISR 写入的状态标志。
- * @param  flag：ISR 与串口任务共享的布尔标志地址。
- * @retval true：标志曾经置位，本次已经清除。
- * @retval false：标志未置位。
- */
 static bool serial_monitor_isr_flag_take(volatile bool *flag)
 {
   bool value;
@@ -311,17 +471,6 @@ static bool serial_monitor_isr_flag_take(volatile bool *flag)
   return value;
 }
 
-/**
- * @brief  接收一个 UART 字节完成后，将结果投递给串口任务并续接中断接收。
- * @param  self：触发回调的 UART 基础对象。
- * @param  data：本次接收使用的单字节缓冲区。
- * @param  size：本次完成的接收长度，正常情况下为 1。
- * @param  result：PLATFORM_OK 或平台 UART 接收错误码。
- * @param  context：调用者上下文，当前实现不使用。
- * @retval None
- * @note   本函数运行在 USART1 ISR，只允许调用 FreeRTOS FromISR API 和
- *         uart_interrupt_receive() 续接接口，不执行协议解析或日志输出。
- */
 static void serial_monitor_rx_callback(struct uart *self,
                                        uint8_t *data,
                                        uint16_t size,
@@ -335,35 +484,26 @@ static void serial_monitor_rx_callback(struct uart *self,
   (void)context;
   event.byte = UINT8_C(0);
   event.result = (int8_t)result;
-  if ((result == PLATFORM_OK) && (data != NULL) && (size == UINT16_C(1))) {
+  if ((result == PLATFORM_OK) && (data != NULL) &&
+      (size == UINT16_C(1))) {
     event.byte = data[0];
   } else if (result == PLATFORM_OK) {
     event.result = (int8_t)PLATFORM_ERR_IO;
   }
 
-  /* 先续接下一字节接收，尽量缩短 USART 硬件未布防的时间窗口。 */
   rearm_result = uart_interrupt_receive(
       self, &s_rx_byte, UINT16_C(1), serial_monitor_rx_callback, NULL);
   if (rearm_result != PLATFORM_OK) {
     s_rx_rearm_required = true;
   }
-
   if ((s_rx_queue == NULL) ||
       (xQueueSendFromISR(s_rx_queue, &event,
                          &higher_priority_task_woken) != pdPASS)) {
-    /* 队列满意味着命令已经缺字节，任务必须丢弃整条残缺命令。 */
     s_rx_queue_overflow = true;
   }
-
   portYIELD_FROM_ISR(higher_priority_task_woken);
 }
 
-/**
- * @brief  在任务上下文恢复已经停止的 UART 单字节中断接收链。
- * @param  uart：具备中断接收能力且已经启动的 UART 对象。
- * @retval None
- * @note   失败时按固定间隔重试，期间本任务处于阻塞态，不会忙等占用 CPU。
- */
 static void serial_monitor_receive_rearm(struct uart *uart)
 {
   int result;
@@ -422,31 +562,143 @@ static int serial_monitor_write(void *context,
 }
 
 /**
- * @brief  通过 USART1 发送一组 WEIXIN 左右轮速度波形采样。
+ * @brief  通过USART1发送一组已启用的WEIXIN波形采样。
  * @param  uart 已初始化并绑定到 USART1 的 UART 对象。
  * @return PLATFORM_OK 表示发送成功或尚无有效采样，其他 PLATFORM_* 表示失败。
- * @note   两个通道位于同一行，因此 GUI 使用同一个采样序号绘制它们。
+ * @note   所有有效通道位于同一行，因此GUI使用同一采样序号绘制它们。
  */
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+#if SERIAL_MONITOR_WAVE_ENABLE
 static int serial_monitor_wave_report(struct uart *uart)
 {
+#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
   int32_t left_speed;
   int32_t right_speed;
+#endif
+#if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
+  int8_t ball_velocity;
+  float ball_filtered_velocity;
+  int32_t emm_speed_rpm;
+#endif
+#if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
+  int16_t ball_target_x;
+  int16_t ball_position_x;
+  float ball_filtered_x;
+#endif
   int written;
+  int appended;
 
-  if (!serial_monitor_drive_speeds_snapshot_get(
+  written = 0;
+#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+  if (serial_monitor_drive_speeds_snapshot_get(
           &left_speed, &right_speed)) {
+    written = snprintf(
+        s_wave_buffer, sizeof(s_wave_buffer),
+        "wave.left_speed=%ld wave.right_speed=%ld",
+        (long)left_speed, (long)right_speed);
+    if ((written < 0) || (written >= (int)sizeof(s_wave_buffer))) {
+      return PLATFORM_ERR_IO;
+    }
+  }
+#endif
+
+#if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)
+  if (serial_monitor_ball_velocities_snapshot_get(
+          &ball_velocity, &ball_filtered_velocity)) {
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_velocity=%d wave.ball_velocity_filtered=%.3f",
+        (written > 0) ? " " : "",
+        (int)ball_velocity,
+        (double)ball_filtered_velocity);
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+  }
+  if (serial_monitor_emm_speed_snapshot_get(&emm_speed_rpm)) {
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_speed_rpm=%ld",
+        (written > 0) ? " " : "",
+        (long)emm_speed_rpm);
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+  }
+#endif
+#if (SERIAL_MONITOR_BALL_POSITION_WAVE_ENABLE == 1)
+  if (serial_monitor_ball_positions_snapshot_get(
+          &ball_target_x, &ball_position_x, &ball_filtered_x)) {
+#if (SERIAL_MONITOR_BALL_TARGET_X_WAVE_ENABLE == 1)
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_target_x=%d",
+        (written > 0) ? " " : "",
+        (int)ball_target_x);
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+#endif
+#if (SERIAL_MONITOR_BALL_POSITION_X_WAVE_ENABLE == 1)
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_position_x=%d",
+        (written > 0) ? " " : "",
+        (int)ball_position_x);
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+#endif
+#if (SERIAL_MONITOR_BALL_POSITION_X_FILTERED_WAVE_ENABLE == 1)
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_position_x_filtered=%.3f",
+        (written > 0) ? " " : "",
+        (double)ball_filtered_x);
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+#endif
+#if (SERIAL_MONITOR_BALL_ERROR_X_WAVE_ENABLE == 1)
+    appended = snprintf(
+        s_wave_buffer + written,
+        sizeof(s_wave_buffer) - (size_t)written,
+        "%swave.ball_error_x=%.3f",
+        (written > 0) ? " " : "",
+        (double)((float)ball_target_x - ball_filtered_x));
+    if ((appended < 0) ||
+        (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
+      return PLATFORM_ERR_IO;
+    }
+    written += appended;
+#endif
+  }
+#endif
+  if (written == 0) {
     return PLATFORM_OK;
   }
-
-  written = snprintf(
-      s_wave_buffer, sizeof(s_wave_buffer),
-      "wave.left_speed=%ld wave.right_speed=%ld\r\n",
-      (long)left_speed, (long)right_speed);
-  if ((written < 0) ||
-      (written >= (int)sizeof(s_wave_buffer))) {
+  appended = snprintf(s_wave_buffer + written,
+                      sizeof(s_wave_buffer) - (size_t)written,
+                      "\r\n");
+  if ((appended != 2) ||
+      (appended >= (int)(sizeof(s_wave_buffer) - (size_t)written))) {
     return PLATFORM_ERR_IO;
   }
+  written += appended;
 
   return serial_monitor_write(
       uart, (const uint8_t *)s_wave_buffer, (uint16_t)written);
@@ -479,7 +731,7 @@ static bool serial_monitor_command_handle(
 }
 
 /**
- * @brief  初始化协议组件并验证 UART1 阻塞接收能力。
+ * @brief  初始化协议组件并启动UART1单字节中断接收。
  * @param  uart：用于接收上位机命令的 UART1 对象。
  * @return PLATFORM_OK 表示准备成功；其他 PLATFORM_* 表示失败。
  */
@@ -526,7 +778,7 @@ void serial_monitor_task(void *argument)
 {
   struct uart *uart;
   struct serial_monitor_rx_event event;
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+#if SERIAL_MONITOR_WAVE_ENABLE
   TickType_t last_wave_time;
   TickType_t current_time;
 #endif
@@ -544,7 +796,7 @@ void serial_monitor_task(void *argument)
 
   printf("[monitor] ready, params=%u\r\n",
          (unsigned int)(sizeof(s_params) / sizeof(s_params[0])));
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+#if SERIAL_MONITOR_WAVE_ENABLE
   last_wave_time = xTaskGetTickCount();
 #endif
 
@@ -556,9 +808,7 @@ void serial_monitor_task(void *argument)
         discarding_line = true;
         serial_monitor_error_increment(&s_rx_error_count);
       }
-
       if (event.result != (int8_t)PLATFORM_OK) {
-        /* 硬件错误发生后，丢弃当前残缺行直到重新遇到行结束符。 */
         (void)weixin_protocol_reset_line(&s_protocol);
         discarding_line = true;
         serial_monitor_error_increment(&s_rx_error_count);
@@ -578,7 +828,7 @@ void serial_monitor_task(void *argument)
       serial_monitor_receive_rearm(uart);
     }
 
-#if (SERIAL_MONITOR_DRIVE_DEBUG_ENABLE == 1)
+#if SERIAL_MONITOR_WAVE_ENABLE
     current_time = xTaskGetTickCount();
     if ((TickType_t)(current_time - last_wave_time) >=
         SERIAL_MONITOR_RX_WAIT_TICKS) {

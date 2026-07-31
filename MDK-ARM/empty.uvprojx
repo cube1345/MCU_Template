@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../layer;../layer/platform;../layer/platform/inferface/uart;../layer/platform/inferface/i2c;../layer/platform/inferface/pin;../layer/platform/inferface/pwm;../layer/platform/inferface/encoder_counter;../layer/platform/inferface/timebase;../layer/platform/mcu/stm32f4;../layer/platform/mcu/stm32f4/core;../layer/platform/mcu/stm32f4/uart;../layer/platform/mcu/stm32f4/i2c;../layer/platform/mcu/stm32f4/pin;../layer/platform/mcu/stm32f4/pwm;../layer/platform/mcu/stm32f4/encoder_counter;../layer/device;../layer/device/key;../layer/device/led;../layer/device/encoder;../layer/device/motor;../layer/driver;../layer/driver/key;../layer/driver/led;../layer/driver/encoder;../layer/driver/motor;../layer/component;../layer/component/key;../layer/component/motor_axis;../layer/component/tracking;../layer/component/weixin_protocol;../layer/library;../layer/library/ahrs;../layer/library/filter;../layer/library/math;../layer/library/control;../layer/application/core;../layer/board/stm32f407;../layer/board/stm32f407/i2c;../layer/board/stm32f407/imu;../layer/board/stm32f407/key;../layer/board/stm32f407/led;../layer/board/stm32f407/oled;../layer/board/stm32f407/uart;../layer/board/stm32f407/drive;../layer/board/stm32f407/tracking;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../layer/platform/RTOS;../layer/platform/RTOS/monitor;../layer/platform/RTOS/include;../layer/platform/RTOS/portable</IncludePath>
+              <IncludePath>../Core/Inc;../layer;../layer/platform;../layer/platform/inferface/uart;../layer/platform/inferface/i2c;../layer/platform/inferface/pin;../layer/platform/inferface/pwm;../layer/platform/inferface/encoder_counter;../layer/platform/inferface/timebase;../layer/platform/mcu/stm32f4;../layer/platform/mcu/stm32f4/core;../layer/platform/mcu/stm32f4/uart;../layer/platform/mcu/stm32f4/i2c;../layer/platform/mcu/stm32f4/pin;../layer/platform/mcu/stm32f4/pwm;../layer/platform/mcu/stm32f4/encoder_counter;../layer/device;../layer/device/key;../layer/device/led;../layer/device/encoder;../layer/device/motor;../layer/driver;../layer/driver/key;../layer/driver/led;../layer/driver/encoder;../layer/driver/motor;../layer/component;../layer/component/key;../layer/component/emm_v5_soft_limit;../layer/component/motor_axis;../layer/component/tracking;../layer/component/weixin_protocol;../layer/library;../layer/library/ahrs;../layer/library/filter;../layer/library/math;../layer/library/control;../layer/application/core;../layer/board/stm32f407;../layer/board/stm32f407/i2c;../layer/board/stm32f407/imu;../layer/board/stm32f407/key;../layer/board/stm32f407/led;../layer/board/stm32f407/oled;../layer/board/stm32f407/uart;../layer/board/stm32f407/drive;../layer/board/stm32f407/tracking;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../layer/platform/RTOS;../layer/platform/RTOS/monitor;../layer/platform/RTOS/include;../layer/platform/RTOS/portable</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -676,6 +676,11 @@
               <FilePath>../layer/component/motor_axis/motor_axis.c</FilePath>
             </File>
             <File>
+              <FileName>emm_v5_soft_limit.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../layer/component/emm_v5_soft_limit/emm_v5_soft_limit.c</FilePath>
+            </File>
+            <File>
               <FileName>weixin_protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>../layer/component/weixin_protocol/weixin_protocol.c</FilePath>
@@ -789,6 +794,16 @@
               <FileName>app_tracking.c</FileName>
               <FileType>1</FileType>
               <FilePath>../layer/application/core/app_tracking.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_vision.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../layer/application/core/app_vision.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ball_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../layer/application/core/app_ball_control.c</FilePath>
             </File>
             <File>
               <FileName>app_serial_monitor.c</FileName>

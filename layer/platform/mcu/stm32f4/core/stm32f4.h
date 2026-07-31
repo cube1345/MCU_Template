@@ -227,6 +227,7 @@
 /* STM32F407 UART 控制器编号，由板级配置选择具体实例。 */
 #define STM32F4_UART1 INT32_C(0)
 #define STM32F4_UART6 INT32_C(1)
+#define STM32F4_UART3 INT32_C(2)
 
 struct i2c_bus_config;
 

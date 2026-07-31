@@ -90,8 +90,10 @@ layer/application/core/main.c
 | `key` | 2 | 每 10 ms 轮询 USER 按键；当前识别结果未被业务消费 |
 | `oled` | 1 | 延时 50 ms 后初始化 OLED，每秒显示递增计数 |
 | `motor` | 3 | 左右电机闭环控制，周期 5 ms，从原子邮箱消费目标速度 |
-| `emm_v5` | 1 | 延时 2 秒后使能驱动器，每 100 ms 查询实时位置 |
+| `emm_v5` | 1 | 延时2秒后使能，20 ms检查位置限幅，100 ms打印位置 |
 | `tracking` | 1 | 每 5 ms 用八路输入计算差速并发布左右轮目标，200 ms 打印状态 |
+| `vision` | 1 | USART3 中断逐字节接收，经 128 项队列解析 Jetson 6 字节数据帧 |
+| `ball_ctrl` | 2 | 每 20 ms 读取视觉速度并计算内环PID，当前不发送给EMM |
 
 未启用或被链接裁剪：
 
@@ -115,8 +117,8 @@ layer/application/core/main.c
 | PB2 | 蓝色 LED，低电平点亮 | 已启用，每秒翻转 |
 | PC5 | 红色 LED，低电平点亮 | 已初始化，默认熄灭 |
 | PB6 / PB7 | OLED I2C1 SCL/SDA | 已启用，400 kHz，SSD1306 地址 0x3C |
+| PB10 / PB11 | USART3 TX/RX | 已启用，115200，视觉上位机通信 |
 | PC6 / PC7 | USART6 TX/RX | 已启用，115200，EMM V5 |
-| PB10 / PB11 | 备用 I2C2 SCL/SDA | Board 已分配，默认未启动 |
 | PA13 / PA14 | SWDIO/SWCLK | 系统保留 |
 | PC14 / PC15 | LSE | CubeMX 系统保留 |
 | PH0 / PH1 | HSE | CubeMX 系统保留 |
@@ -129,7 +131,7 @@ layer/application/core/main.c
 - TIM2 四个通道共同驱动左右 AT8236，所有通道共享 PWM 频率。
 - TIM3 整体用于右编码器，不能恢复 PB4/TIM3_CH1 LED PWM。
 - PC6/PC7 已由 USART6 独占，新增复用功能必须避让。
-- PB10/PB11 虽未启动，但属于 Board 预留；复用前先修改 Board 配置和引脚台账。
+- PB10/PB11 已由 USART3 独占，不能再复用为 I2C2。
 
 ## 7. 主要功能状态
 
@@ -179,19 +181,54 @@ layer/application/core/main.c
   协议任务仍同步等待 DMA 完成和完整应答。
 - 当前 `response_required=true`，驱动器菜单必须设为 `Response=Receive`；
   每条控制命令校验地址、功能码、状态和固定 `0x6B` 校验字节。
-- 任务以 `100 ms` 周期发送 `0x36` 查询实时位置并打印 `position_raw`；
+- 任务以 `20 ms` 周期发送 `0x36` 查询实时位置，每 `100 ms` 打印一次；
   原始值每 `65536` 表示一圈。读取、校验或超时失败时立即停止并退出任务。
-- 使能后将当前机械位置清为软件 `0°`；这不是机械回零。任务读取
-  `emm.position_deg`，仅在目标变化时发送 `0xFD` 绝对位置命令。
-- 角度范围为 `-15°..15°`，按 1.8° 电机、16 细分换算为
+- `emm_v5_soft_limit` 以修饰器模式包装原始 EMM motor，软件限位要求
+  `-7000 <= position_raw <= 7000`；首次越界立即停止当前运动，但保持
+  EMM 使能和任务运行。
+- 正向越界时拒绝继续增大 raw 的速度，负向越界时拒绝继续减小 raw 的
+  速度，`0 rpm` 和返回安全区方向始终允许；绝对/相对位置命令仅在目标
+  `|position_raw|` 小于当前绝对值时允许。被拦截命令返回
+  `PLATFORM_ERR_BUSY`，不作为通信故障处理。
+- 使能后将当前机械位置清为软件 `0°`；这不是机械回零。当前
+  `EMM_V5_WEIXIN_POSITION_CONTROL_ENABLED=0`，保留 `emm.position_deg`
+  参数但不执行其位置命令。
+- 角度范围为 `-45°..45°`，按 1.8° 电机、16 细分换算为
   `3200 pulse/rev`；`1°` 四舍五入为 `9` 个位置脉冲。
-- 当前任务不发送速度模式命令；位置运动只由上述参数变化触发。
+- `ball_ctrl` 通过临界区保护的内存邮箱发布整数RPM目标，独占USART6的
+  EMM任务只在目标变化时通过修饰后的motor发送速度命令。
 
 ### 7.5 I2C
 
 - OLED 当前使用 I2C1 硬件阻塞传输。
 - 软件 I2C 后端仍然存在。
 - I2C 中断 ops 已存在，但未发现完整的 I2C EV/ER IRQ、NVIC 和 HAL IRQ 接入，不能视为已经可用。
+
+### 7.6 视觉上位机通信
+
+- 使用 USART3 PB10(TX)/PB11(RX)，波特率 115200。
+- USART3 采用单字节中断接收；ISR 只续接接收并投递 FreeRTOS 队列，
+  Jetson 协议解析在 `vision` 任务上下文执行。
+- Jetson 数据帧固定为 `AA X_H X_L V A FF`，X 按大端有符号 16 位解析并
+  校验在 `-320..320` 范围内，V 和 A 按有符号 8 位解析。
+- `vision_get_ball_data()` 返回最近一次有效的 X/V/A；当前未启用视觉通信
+  看门狗，因此数据不会随时间自动失效。
+- `vision_send_task_frame()` 可发送 `AA DATA_1 DATA_2 FF` 任务帧，当前没有
+  自动发送任务帧，调用者必须根据实际比赛模式提供两个数据字节。
+- USART3 IRQ 优先级为 5，可调用当前 FreeRTOS 配置允许的 `FromISR` API。
+
+### 7.7 小球双环控制骨架
+
+- `ball_ctrl` 任务以 20 ms 周期读取最近一次 Jetson X/V/A 数据。
+- 当前先实现速度内环，视觉速度以 `alpha=0.25` 一阶低通后参与误差计算，
+  PID输出定义为EMM速度RPM；目标速度范围为 `-128..127 pixel/frame`。
+- 每个合法视觉帧带单调递增序号，速度 PID 只在序号变化时更新，避免控制任务
+  对同一帧速度重复积分；PID 的 `dt` 使用两次新帧处理之间的 FreeRTOS Tick。
+- 临时速度环参数为 `Kp=10, Ki=0, Kd=0`，输出限为 `-300..300 rpm`；
+  浮点输出四舍五入为整数RPM后交给EMM任务，控制方向和增益尚未整机标定。
+- 位置目标和接口已保留，但位置外环尚未参与速度目标计算。
+- 控制计算默认启用并以10 Hz打印目标、原始/滤波速度和PID RPM输出；
+  `vision_valid=false`或控制关闭时发布0 RPM。WEIXIN位置控制通过宏保持关闭。
 
 ## 8. USART1 与串口协议
 
@@ -244,7 +281,7 @@ system status
 | `drive.speed_ki` | 读写 | 0..10 |
 | `drive.left_speed` | 读写 | 左轮循迹基础速度，-200000..200000 count/s |
 | `drive.right_speed` | 读写 | 右轮循迹基础速度，-200000..200000 count/s |
-| `emm.position_deg` | 读写 | EMM绝对角度，-15..15度 |
+| `emm.position_deg` | 读写 | EMM绝对角度，-45..45度 |
 | `monitor.tx_errors` | 只读 | UART 最终发送失败次数 |
 | `monitor.rx_errors` | 只读 | UART 接收、队列或续接错误次数 |
 
@@ -333,10 +370,13 @@ VSCode 说明：
 | `layer/application/core/app_system_stats.c` | 按需系统状态报告 |
 | `layer/application/core/app_motor.c` | 当前双电机闭环业务 |
 | `layer/application/core/app_tracking.c` | 八路循迹差速计算与目标发布任务 |
+| `layer/application/core/app_vision.c` | USART3 Jetson 定长帧接收、解析和任务帧发送 |
+| `layer/application/core/app_ball_control.c` | 小球速度内环、低通滤波和EMM速度目标发布 |
 | `layer/component/motor_axis/` | 电机、编码器、PI 和滤波组合 |
+| `layer/component/emm_v5_soft_limit/` | EMM速度与位置命令软件限位修饰器 |
 | `layer/component/tracking/` | 八路循迹数字输入采样组件 |
 | `layer/board/stm32f407/drive/board_drive.c` | 双电机和编码器资源绑定 |
-| `layer/board/stm32f407/uart/board_uart.c` | USART1/USART6 配置 |
+| `layer/board/stm32f407/uart/board_uart.c` | USART1/USART3/USART6 配置 |
 | `layer/platform/mcu/stm32f4/uart/stm32f4_uart.c` | UART、IRQ 和 DMA 后端 |
 | `layer/platform/mcu/stm32f4/i2c/stm32f4_i2c.c` | I2C HAL 后端 |
 | `layer/platform/RTOS/FreeRTOSConfig.h` | FreeRTOS 核心配置 |

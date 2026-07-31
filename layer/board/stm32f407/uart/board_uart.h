@@ -25,6 +25,19 @@ int board_uart1_init(void);
 struct uart *board_uart1_get(void);
 
 /**
+ * @brief  初始化连接视觉上位机的USART3。
+ * @retval PLATFORM_OK表示成功或已经初始化，其他值表示失败。
+ * @note   固定使用PB10(TX)、PB11(RX)、115200 baud和中断接收。
+ */
+int board_uart3_init(void);
+
+/**
+ * @brief  获取视觉上位机使用的USART3对象。
+ * @return 初始化成功后返回UART对象，否则返回NULL。
+ */
+struct uart *board_uart3_get(void);
+
+/**
  * @brief  初始化连接EMM V5驱动器的STM32F407板级USART6。
  * @retval PLATFORM_OK表示初始化成功或已经初始化，其他PLATFORM_*表示失败。
  * @note   USART6固定使用PC6作为TX、PC7作为RX，默认波特率为115200。

@@ -56,6 +56,7 @@ set(PROJECT_SOURCES
     layer/driver/motor/at8236_motor.c
     layer/driver/motor/emm_v5/emm_v5.c
     layer/component/key/key_event.c
+    layer/component/emm_v5_soft_limit/emm_v5_soft_limit.c
     layer/component/motor_axis/motor_axis.c
     layer/component/tracking/tracking_inputs.c
     layer/component/weixin_protocol/weixin_protocol.c
@@ -79,6 +80,8 @@ set(PROJECT_SOURCES
     layer/application/core/app_emm_v5.c
     layer/application/core/app_serial_monitor.c
     layer/application/core/app_tracking.c
+    layer/application/core/app_vision.c
+    layer/application/core/app_ball_control.c
     layer/board/stm32f407/led/board_led.c
     layer/board/stm32f407/key/board_key.c
     layer/board/stm32f407/uart/board_uart.c
@@ -152,6 +155,7 @@ target_include_directories(stm32f407_oop_index PRIVATE
     layer/driver/motor/emm_v5
     layer/component
     layer/component/key
+    layer/component/emm_v5_soft_limit
     layer/component/motor_axis
     layer/component/tracking
     layer/component/weixin_protocol

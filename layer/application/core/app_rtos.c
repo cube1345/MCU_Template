@@ -4,11 +4,12 @@
  * @author  weixin
  *
  * 各任务的业务逻辑分别位于 app_led、app_key、app_oled、app_motor、
- * app_emm_v5、app_tracking 和 app_serial_monitor 模块。本文件只维护
- * 统一调度配置和启动流程。
+ * app_emm_v5、app_tracking、app_ball_control 和 app_serial_monitor 模块。
+ * 本文件只维护统一调度配置和启动流程。
  */
 #include "app_rtos.h"
 
+#include "app_ball_control.h"
 #include "app_emm_v5.h"
 #include "app_key.h"
 #include "app_led.h"
@@ -17,6 +18,7 @@
 #include "app_serial_monitor.h"
 #include "app_system_stats.h"
 #include "app_tracking.h"
+#include "app_vision.h"
 #include "board_drive.h"
 #include "board_tracking.h"
 #include "board_uart.h"
@@ -38,6 +40,8 @@
 #define SERIAL_MONITOR_STACK_DEPTH (configMINIMAL_STACK_SIZE * 3U)
 #define SYSTEM_STATS_STACK_DEPTH (configMINIMAL_STACK_SIZE * 3U)
 #define TRACKING_STACK_DEPTH (configMINIMAL_STACK_SIZE)
+#define VISION_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
+#define BALL_CONTROL_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
 
 /* 所有应用任务优先级均基于 FreeRTOS 空闲任务优先级。 */
 #define LED_PRIORITY (tskIDLE_PRIORITY + 1U)
@@ -48,6 +52,8 @@
 #define SERIAL_MONITOR_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define SYSTEM_STATS_PRIORITY (tskIDLE_PRIORITY + 1U)
 #define TRACKING_PRIORITY (tskIDLE_PRIORITY + 1U)
+#define VISION_PRIORITY (tskIDLE_PRIORITY + 1U)
+#define BALL_CONTROL_PRIORITY (tskIDLE_PRIORITY + 2U)
 
 /* 防止 tasks_create() 被重复调用后重复创建任务。 */
 static bool s_tasks_created;
@@ -113,6 +119,16 @@ int tasks_create(void)
   if (xTaskCreate(tracking_task, "tracking",
                   TRACKING_STACK_DEPTH, NULL,
                   TRACKING_PRIORITY, NULL) != pdPASS) {
+    return PLATFORM_ERR_IO;
+  }
+  if (xTaskCreate(vision_task, "vision",
+                  VISION_STACK_DEPTH, NULL,
+                  VISION_PRIORITY, NULL) != pdPASS) {
+    return PLATFORM_ERR_IO;
+  }
+  if (xTaskCreate(ball_control_task, "ball_ctrl",
+                  BALL_CONTROL_STACK_DEPTH, NULL,
+                  BALL_CONTROL_PRIORITY, NULL) != pdPASS) {
     return PLATFORM_ERR_IO;
   }
 

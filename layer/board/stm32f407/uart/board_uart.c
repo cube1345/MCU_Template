@@ -24,6 +24,11 @@
 #define BOARD_UART1_TIMEOUT_MS UINT32_C(1000)
 #define BOARD_UART1_IRQ_PRIORITY UINT32_C(5)
 
+/* 视觉上位机使用USART3，PB10为TX，PB11为RX。 */
+#define BOARD_UART3_BAUD_RATE UINT32_C(115200)
+#define BOARD_UART3_TIMEOUT_MS UINT32_C(1000)
+#define BOARD_UART3_IRQ_PRIORITY UINT32_C(5)
+
 /* EMM V5闭环步进驱动器使用的USART6通信参数。 */
 #define BOARD_UART6_BAUD_RATE UINT32_C(115200)
 #define BOARD_UART6_TIMEOUT_MS UINT32_C(100)
@@ -39,6 +44,16 @@ static const struct stm32f4_uart_config g_uart1_config = {
   .irq_priority = BOARD_UART1_IRQ_PRIORITY,
 };
 
+static const struct stm32f4_uart_config g_uart3_config = {
+  .id = STM32F4_UART3,
+  .name = "usart3",
+  .tx_pin = STM32F4_PIN_PB10,
+  .rx_pin = STM32F4_PIN_PB11,
+  .baud_rate = BOARD_UART3_BAUD_RATE,
+  .timeout_ms = BOARD_UART3_TIMEOUT_MS,
+  .irq_priority = BOARD_UART3_IRQ_PRIORITY,
+};
+
 /* USART6固定接到PC6(TX)与PC7(RX)，不参与printf重定向。 */
 static const struct stm32f4_uart_config g_uart6_config = {
   .id = STM32F4_UART6,
@@ -52,6 +67,7 @@ static const struct stm32f4_uart_config g_uart6_config = {
 
 static struct uart *g_uart1;
 static int32_t g_uart1_mode;
+static struct uart *g_uart3;
 /* USART6 使用 TX DMA 和 RX 中断环，协议任务同步读取完整应答。 */
 static struct uart *g_uart6;
 
@@ -107,6 +123,33 @@ int board_uart1_init(void)
 struct uart *board_uart1_get(void)
 {
   return (g_uart1_mode != BOARD_UART1_MODE_NONE) ? g_uart1 : NULL;
+}
+
+int board_uart3_init(void)
+{
+  int result;
+
+  if (g_uart3 != NULL) {
+    return PLATFORM_OK;
+  }
+  result = stm32f4_init();
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  g_uart3 = stm32f4_uart_interrupt_create(&g_uart3_config);
+  if (g_uart3 == NULL) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+  result = uart_start(g_uart3);
+  if (result != PLATFORM_OK) {
+    g_uart3 = NULL;
+  }
+  return result;
+}
+
+struct uart *board_uart3_get(void)
+{
+  return g_uart3;
 }
 
 /**
