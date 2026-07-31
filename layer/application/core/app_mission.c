@@ -69,19 +69,19 @@
 #define MISSION_TASK4_TRACKING_SPEED INT32_C(60000)
 /* 任务4启动后自动停止小车的时间，单位为毫秒。 */
 #define MISSION_TASK4_AUTO_STOP_MS UINT32_C(8000)
-/* 任务4的小球视觉X目标，0表示摆杆中心点。 */
-#define MISSION_TASK4_BALL_TARGET_X INT16_C(0)
+/* 任务4的小球视觉X目标，2表示当前标定的摆杆中心点。 */
+#define MISSION_TASK4_BALL_TARGET_X INT16_C(2)
 /* 任务5循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
 #define MISSION_TASK5_TRACKING_SPEED INT32_C(60000)
-/* 任务5的小球视觉X目标，0表示摆杆中心点。 */
-#define MISSION_TASK5_BALL_TARGET_X INT16_C(0)
+/* 任务5的小球视觉X目标，2表示当前标定的摆杆中心点。 */
+#define MISSION_TASK5_BALL_TARGET_X INT16_C(2)
 /* 任务6循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
 #define MISSION_TASK6_TRACKING_SPEED INT32_C(60000)
 
-/* 任务3机械+5cm对应的视觉X目标；相机坐标方向与机械方向相反。 */
-#define MISSION_TASK3_POSITIVE_5CM_TARGET_X INT16_C(-130)
+/* 任务3机械+5cm对应的视觉X目标。 */
+#define MISSION_TASK3_POSITIVE_5CM_TARGET_X INT16_C(130)
 /* 任务3机械-5cm对应的视觉X目标。 */
-#define MISSION_TASK3_NEGATIVE_5CM_TARGET_X INT16_C(130)
+#define MISSION_TASK3_NEGATIVE_5CM_TARGET_X INT16_C(-125)
 /* 任务3子阶段：小球从中心前往机械+5cm位置。 */
 #define MISSION_TASK3_GO_POSITIVE_5CM UINT8_C(0)
 /* 任务3子阶段：小球折返并前往机械-5cm位置。 */
