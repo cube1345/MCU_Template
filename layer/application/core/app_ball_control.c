@@ -57,6 +57,8 @@ static const struct pid_config s_position_pid_config = {
 
 /* 上电默认关闭，由任务状态机在选定项目启动后显式开启。 */
 static bool s_control_enabled;
+static bool s_open_loop_enabled;
+static float s_open_loop_position_deg;
 static struct ball_control_status s_control_status;
 
 int ball_control_target_x_set(int16_t target_x)
@@ -68,6 +70,22 @@ int ball_control_enabled_set(bool enabled)
 {
   taskENTER_CRITICAL();
   s_control_enabled = enabled;
+  s_open_loop_enabled = false;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int ball_control_open_loop_position_deg_set(float position_deg)
+{
+  if (!math_is_finite(position_deg) ||
+      (position_deg < BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN) ||
+      (position_deg > BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX)) {
+    return PLATFORM_ERR_INVALID_CONFIGURATION;
+  }
+  taskENTER_CRITICAL();
+  s_control_enabled = false;
+  s_open_loop_position_deg = position_deg;
+  s_open_loop_enabled = true;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
@@ -85,12 +103,16 @@ int ball_control_status_get(struct ball_control_status *status)
 
 static void ball_control_settings_get(int16_t *target_x,
                                       float *velocity_damping,
-                                      bool *enabled)
+                                      bool *pid_enabled,
+                                      bool *open_loop_enabled,
+                                      float *open_loop_position_deg)
 {
   (void)serial_monitor_ball_target_x_get(target_x);
   (void)serial_monitor_ball_velocity_damping_get(velocity_damping);
   taskENTER_CRITICAL();
-  *enabled = s_control_enabled;
+  *pid_enabled = s_control_enabled;
+  *open_loop_enabled = s_open_loop_enabled;
+  *open_loop_position_deg = s_open_loop_position_deg;
   taskEXIT_CRITICAL();
 }
 
@@ -129,6 +151,9 @@ void ball_control_task(void *argument)
   uint32_t last_sequence = UINT32_C(0);
   bool velocity_estimate_initialized = false;
   bool static_friction_compensation_active = false;
+  bool pid_enabled;
+  bool open_loop_enabled;
+  float open_loop_position_deg;
   int result;
 
   (void)argument;
@@ -155,7 +180,9 @@ void ball_control_task(void *argument)
   last_print_tick = last_wake_time;
   for (;;) {
     ball_control_settings_get(&status.target_x, &velocity_damping,
-                              &status.enabled);
+                              &pid_enabled, &open_loop_enabled,
+                              &open_loop_position_deg);
+    status.enabled = pid_enabled || open_loop_enabled;
     result = serial_monitor_ball_position_gains_get(
         &requested_position_kp, &requested_position_ki,
         &requested_position_kd);
@@ -186,7 +213,23 @@ void ball_control_task(void *argument)
       status.vision_sequence = ball.sequence;
     }
 
-    if (!status.enabled || !status.vision_valid) {
+    if (open_loop_enabled) {
+      pid_reset(&position_controller);
+      (void)low_pass_filter_init(
+          &position_filter, BALL_CONTROL_POSITION_FILTER_ALPHA);
+      (void)low_pass_filter_init(
+          &velocity_filter, BALL_CONTROL_VELOCITY_FILTER_ALPHA);
+      status.filtered_x = 0.0F;
+      status.filtered_velocity = 0.0F;
+      status.position_pid_output_deg = 0.0F;
+      status.velocity_damping_deg = 0.0F;
+      status.output_position_deg = open_loop_position_deg;
+      status.arrived = false;
+      static_friction_compensation_active = false;
+      velocity_estimate_initialized = false;
+      last_sequence = status.vision_sequence;
+      last_update_tick = xTaskGetTickCount();
+    } else if (!status.enabled || !status.vision_valid) {
       pid_reset(&position_controller);
       (void)low_pass_filter_init(
           &position_filter, BALL_CONTROL_POSITION_FILTER_ALPHA);
@@ -256,7 +299,7 @@ void ball_control_task(void *argument)
                               &status.position_pid_output_deg);
         }
       }
-      if ((result == PLATFORM_OK) && !status.arrived) {
+      if ((result == PLATFORM_OK) && pid_enabled && !status.arrived) {
         status.velocity_damping_deg =
             velocity_damping * status.filtered_velocity;
         uncompensated_output_deg =

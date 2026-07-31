@@ -13,6 +13,8 @@
 /* 相对水管中心的小球目标位置范围，单位为像素。 */
 #define BALL_CONTROL_TARGET_X_MIN INT16_C(-320)
 #define BALL_CONTROL_TARGET_X_MAX INT16_C(320)
+#define BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN (-40.0F)
+#define BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX (40.0F)
 
 /* 小球位置环上电默认增益，同时作为WEIXIN参数默认值。 */
 #define BALL_CONTROL_POSITION_KP_DEFAULT (0.01F)
@@ -58,6 +60,14 @@ int ball_control_target_x_set(int16_t target_x);
  * @note   关闭时会复位PID并向EMM绝对位置邮箱发布0度。
  */
 int ball_control_enabled_set(bool enabled);
+
+/**
+ * @brief  启用视觉监测下的固定EMM绝对角度开环控制。
+ * @param  position_deg 固定绝对角度，范围为-40至40度。
+ * @return PLATFORM_OK表示成功，参数非法时返回配置错误。
+ * @note   调用后位置PID关闭；ball_control_enabled_set()会退出开环模式。
+ */
+int ball_control_open_loop_position_deg_set(float position_deg);
 
 /**
  * @brief  获取小球位置控制状态快照。

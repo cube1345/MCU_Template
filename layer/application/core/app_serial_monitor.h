@@ -9,6 +9,20 @@
 
 #include <stdint.h>
 
+struct serial_monitor_task3_open_loop_config {
+  float positive_drive_angle_deg;
+  uint32_t positive_drive_time_ms;
+  float positive_brake_angle_deg;
+  uint32_t positive_brake_time_ms;
+  float positive_hold_angle_deg;
+  uint32_t positive_hold_time_ms;
+  float negative_drive_angle_deg;
+  uint32_t negative_drive_time_ms;
+  float negative_brake_angle_deg;
+  uint32_t negative_brake_time_ms;
+  float hold_angle_deg;
+};
+
 /*
  * 速度环串口调试总开关：1 开启调参和波形，0 关闭并裁剪相关代码。
  * 允许由编译选项预定义该宏覆盖默认值。
@@ -116,6 +130,14 @@ int serial_monitor_ball_target_x_set(int16_t target_x);
  * @return PLATFORM_OK表示读取成功，参数为空时返回参数错误。
  */
 int serial_monitor_ball_velocity_damping_get(float *velocity_damping);
+
+/**
+ * @brief  获取任务3纯定时开环控制参数快照。
+ * @param  config 用于接收各段动作的角度、时间和最终保持角度。
+ * @return PLATFORM_OK表示成功，参数为空时返回参数错误。
+ */
+int serial_monitor_task3_open_loop_config_get(
+    struct serial_monitor_task3_open_loop_config *config);
 
 /**
  * @brief  获取上位机配置的左右轮循迹基础速度快照。

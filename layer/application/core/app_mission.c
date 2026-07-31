@@ -2,6 +2,7 @@
 #include "app_mission.h"
 
 #include "app_ball_control.h"
+#include "app_serial_monitor.h"
 #include "app_tracking.h"
 #include "result.h"
 
@@ -82,14 +83,12 @@
 /* 任务6启动时从静止线性加速到目标速度的时间，单位为毫秒。 */
 #define MISSION_TASK6_STARTUP_RAMP_MS UINT32_C(3000)
 
-/* 任务3机械+5cm对应的视觉X目标。 */
-#define MISSION_TASK3_POSITIVE_5CM_TARGET_X INT16_C(130)
-/* 任务3机械-5cm对应的视觉X目标。 */
-#define MISSION_TASK3_NEGATIVE_5CM_TARGET_X INT16_C(-125)
-/* 任务3子阶段：小球从中心前往机械+5cm位置。 */
-#define MISSION_TASK3_GO_POSITIVE_5CM UINT8_C(0)
-/* 任务3子阶段：小球折返并前往机械-5cm位置。 */
-#define MISSION_TASK3_GO_NEGATIVE_5CM UINT8_C(1)
+/* 任务3纯定时开环状态。 */
+#define MISSION_TASK3_DRIVE_POSITIVE UINT8_C(0)
+#define MISSION_TASK3_BRAKE_POSITIVE UINT8_C(1)
+#define MISSION_TASK3_HOLD_POSITIVE UINT8_C(2)
+#define MISSION_TASK3_DRIVE_NEGATIVE UINT8_C(3)
+#define MISSION_TASK3_BRAKE_NEGATIVE UINT8_C(4)
 
 /* 任务6子阶段：车辆静止并采集评委指定的小球位置。 */
 #define MISSION_TASK6_SAMPLE_TARGET UINT8_C(0)
@@ -122,7 +121,8 @@ static struct mission_snapshot s_snapshot = {
 };
 static TickType_t s_started_tick;
 static TickType_t s_task2_phase_started_tick;
-static uint32_t s_task3_target_start_sequence;
+static TickType_t s_task3_phase_started_tick;
+static struct serial_monitor_task3_open_loop_config s_task3_config;
 static bool s_tracking_startup_ramp_complete = true;
 static TickType_t s_tracking_startup_ramp_started_tick;
 static int32_t s_task6_target_position_sum;
@@ -266,20 +266,14 @@ static int mission_selected_start(uint8_t selected_task)
                                   s_task2_tracking_weights,
                                   APP_TRACKING_OUTPUT_SCALE_MAX);
   case UINT8_C(3):
-    {
-      struct ball_control_status ball_status;
-
-      result = ball_control_status_get(&ball_status);
-      if (result == PLATFORM_OK) {
-        s_task3_target_start_sequence = ball_status.vision_sequence;
-        result = ball_control_target_x_set(
-            MISSION_TASK3_POSITIVE_5CM_TARGET_X);
-      }
-      if (result == PLATFORM_OK) {
-        result = ball_control_enabled_set(true);
-      }
-      return result;
+    result = serial_monitor_task3_open_loop_config_get(
+        &s_task3_config);
+    if (result == PLATFORM_OK) {
+      s_task3_phase_started_tick = xTaskGetTickCount();
+      result = ball_control_open_loop_position_deg_set(
+          s_task3_config.positive_drive_angle_deg);
     }
+    return result;
   case UINT8_C(4):
   case UINT8_C(5):
     result = ball_control_target_x_set(
@@ -505,41 +499,71 @@ static void mission_task2_update(uint8_t substep)
   }
 }
 
+static int mission_task3_phase_start(uint8_t substep,
+                                     float position_deg)
+{
+  int result = ball_control_open_loop_position_deg_set(position_deg);
+
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  s_task3_phase_started_tick = xTaskGetTickCount();
+  taskENTER_CRITICAL();
+  s_snapshot.substep = substep;
+  s_snapshot.revision++;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
 static void mission_task3_update(uint8_t substep)
 {
-  struct ball_control_status ball_status;
+  TickType_t current_tick = xTaskGetTickCount();
+  uint32_t phase_duration_ms;
+  uint8_t next_substep;
+  float next_position_deg;
   int result;
 
-  result = ball_control_status_get(&ball_status);
-  if ((result != PLATFORM_OK) || !ball_status.enabled ||
-      !ball_status.vision_valid || !ball_status.arrived ||
-      (ball_status.vision_sequence == s_task3_target_start_sequence)) {
+  if (substep == MISSION_TASK3_DRIVE_POSITIVE) {
+    phase_duration_ms = s_task3_config.positive_drive_time_ms;
+    next_substep = MISSION_TASK3_BRAKE_POSITIVE;
+    next_position_deg = s_task3_config.positive_brake_angle_deg;
+  } else if (substep == MISSION_TASK3_BRAKE_POSITIVE) {
+    phase_duration_ms = s_task3_config.positive_brake_time_ms;
+    next_substep = MISSION_TASK3_HOLD_POSITIVE;
+    next_position_deg = s_task3_config.positive_hold_angle_deg;
+  } else if (substep == MISSION_TASK3_HOLD_POSITIVE) {
+    phase_duration_ms = s_task3_config.positive_hold_time_ms;
+    next_substep = MISSION_TASK3_DRIVE_NEGATIVE;
+    next_position_deg = s_task3_config.negative_drive_angle_deg;
+  } else if (substep == MISSION_TASK3_DRIVE_NEGATIVE) {
+    phase_duration_ms = s_task3_config.negative_drive_time_ms;
+    next_substep = MISSION_TASK3_BRAKE_NEGATIVE;
+    next_position_deg = s_task3_config.negative_brake_angle_deg;
+  } else if (substep == MISSION_TASK3_BRAKE_NEGATIVE) {
+    phase_duration_ms = s_task3_config.negative_brake_time_ms;
+    next_substep = MISSION_TASK3_BRAKE_NEGATIVE;
+    next_position_deg = s_task3_config.hold_angle_deg;
+  } else {
+    mission_error_set(PLATFORM_ERR_INVALID_STATE);
     return;
   }
 
-  if ((substep == MISSION_TASK3_GO_POSITIVE_5CM) &&
-      (ball_status.target_x == MISSION_TASK3_POSITIVE_5CM_TARGET_X)) {
-    s_task3_target_start_sequence = ball_status.vision_sequence;
-    result = ball_control_target_x_set(
-        MISSION_TASK3_NEGATIVE_5CM_TARGET_X);
-    if (result != PLATFORM_OK) {
-      taskENTER_CRITICAL();
-      s_snapshot.error_code = result;
-      s_snapshot.state = MISSION_STATE_ERROR;
-      s_snapshot.revision++;
-      taskEXIT_CRITICAL();
-      (void)mission_outputs_stop();
-      return;
+  if ((current_tick - s_task3_phase_started_tick) <
+      pdMS_TO_TICKS(phase_duration_ms)) {
+    return;
+  }
+  if (substep == MISSION_TASK3_BRAKE_NEGATIVE) {
+    result = ball_control_open_loop_position_deg_set(
+        next_position_deg);
+    if (result == PLATFORM_OK) {
+      mission_complete(true);
     }
-    taskENTER_CRITICAL();
-    s_snapshot.substep = MISSION_TASK3_GO_NEGATIVE_5CM;
-    s_snapshot.revision++;
-    taskEXIT_CRITICAL();
-    printf("[mission] task 3 reached +5 cm, returning\r\n");
-  } else if ((substep == MISSION_TASK3_GO_NEGATIVE_5CM) &&
-             (ball_status.target_x ==
-              MISSION_TASK3_NEGATIVE_5CM_TARGET_X)) {
-    mission_complete(true);
+  } else {
+    result = mission_task3_phase_start(next_substep,
+                                       next_position_deg);
+  }
+  if (result != PLATFORM_OK) {
+    mission_error_set(result);
   }
 }
 

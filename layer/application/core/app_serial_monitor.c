@@ -57,6 +57,7 @@
 #define SERIAL_MONITOR_BALL_POSITION_GAIN_MAX (100.0)
 #define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MIN (0.0)
 #define SERIAL_MONITOR_BALL_VELOCITY_DAMPING_MAX (100.0)
+#define SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS UINT32_C(10000)
 #if SERIAL_MONITOR_WAVE_ENABLE
 /* WEIXIN所有已启用波形通道的发送周期，单位为毫秒。 */
 #define SERIAL_MONITOR_WAVE_PERIOD_MS UINT32_C(100)
@@ -87,6 +88,21 @@ static int32_t s_ball_target_x;
 /* WEIXIN设置的视觉速度到EMM反向制动角度比例。 */
 static float s_ball_velocity_damping =
     BALL_CONTROL_VELOCITY_DAMPING_DEFAULT;
+/* 任务3纯开环参数；任务开始时由状态机读取一次快照。 */
+static struct serial_monitor_task3_open_loop_config
+    s_task3_open_loop_config = {
+  .positive_drive_angle_deg = 20.0F,
+  .positive_drive_time_ms = UINT32_C(400),
+  .positive_brake_angle_deg = -20.0F,
+  .positive_brake_time_ms = UINT32_C(200),
+  .positive_hold_angle_deg = 0.0F,
+  .positive_hold_time_ms = UINT32_C(500),
+  .negative_drive_angle_deg = -20.0F,
+  .negative_drive_time_ms = UINT32_C(260),
+  .negative_brake_angle_deg = 20.0F,
+  .negative_brake_time_ms = UINT32_C(400),
+  .hold_angle_deg = 0.0F,
+};
 /* 上位机请求的EMM绝对位置，单位为度。 */
 static float s_emm_position_deg;
 /* UART 发送最终失败次数，只由本任务更新。 */
@@ -224,6 +240,94 @@ static const struct weixin_param s_params[] = {
     .writable = true,
   },
   {
+    .name = "task3.pos_drive_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.positive_drive_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.pos_drive_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.positive_drive_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
+    .writable = true,
+  },
+  {
+    .name = "task3.pos_brake_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.positive_brake_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.pos_brake_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.positive_brake_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
+    .writable = true,
+  },
+  {
+    .name = "task3.pos_hold_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.positive_hold_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.pos_hold_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.positive_hold_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
+    .writable = true,
+  },
+  {
+    .name = "task3.neg_drive_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.negative_drive_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.neg_drive_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.negative_drive_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
+    .writable = true,
+  },
+  {
+    .name = "task3.neg_brake_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.negative_brake_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.neg_brake_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.negative_brake_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
+    .writable = true,
+  },
+  {
+    .name = "task3.hold_deg",
+    .type = WEIXIN_PARAM_TYPE_FLOAT,
+    .value = &s_task3_open_loop_config.hold_angle_deg,
+    .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
+    .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
     .name = "emm.position_deg",
     .type = WEIXIN_PARAM_TYPE_FLOAT,
     .value = &s_emm_position_deg,
@@ -320,6 +424,18 @@ int serial_monitor_ball_velocity_damping_get(float *velocity_damping)
 
   taskENTER_CRITICAL();
   *velocity_damping = s_ball_velocity_damping;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
+int serial_monitor_task3_open_loop_config_get(
+    struct serial_monitor_task3_open_loop_config *config)
+{
+  if (config == NULL) {
+    return PLATFORM_ERR_INVALID_ARGUMENT;
+  }
+  taskENTER_CRITICAL();
+  *config = s_task3_open_loop_config;
   taskEXIT_CRITICAL();
   return PLATFORM_OK;
 }
