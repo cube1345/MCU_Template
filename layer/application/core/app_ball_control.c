@@ -25,11 +25,11 @@
 #define BALL_CONTROL_DT_S (0.020F)
 #define BALL_CONTROL_PRINT_PERIOD_MS UINT32_C(100)
 #define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (20.0F)
-#define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (20.0F)
+#define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (80.0F)
 /* 小球位置低通滤波中新样本的权重，越小越平滑但位置环响应越慢。 */
-#define BALL_CONTROL_POSITION_FILTER_ALPHA (0.25F)
+#define BALL_CONTROL_POSITION_FILTER_ALPHA (0.8F)
 /* STM32位置差分速度低通滤波的新样本权重。 */
-#define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.25F)
+#define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.3F)
 
 /* 位置误差到EMM绝对角度的PID参数，机械方向和增益需通过整机调试确认。 */
 static const struct pid_config s_position_pid_config = {
@@ -38,7 +38,7 @@ static const struct pid_config s_position_pid_config = {
   .kd = BALL_CONTROL_POSITION_KD_DEFAULT,
   .output_min = -40.0F,
   .output_max = 40.0F,
-  .output_deadband = 2.0F,
+  .output_deadband = 0.0F,
   .integral_clear_error = 0.0F,
   .integral_min = -20.0F,
   .integral_max = 20.0F,

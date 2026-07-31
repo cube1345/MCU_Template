@@ -20,7 +20,7 @@
 /* 快速位置模式的默认运行速度，单位为RPM。 */
 #define BOARD_EMM_V5_POSITION_SPEED_RPM UINT16_C(300)
 /* EMM V5加速度档位：0关闭斜坡；较小的非零值可使位置命令起停更平滑。 */
-#define BOARD_EMM_V5_ACCELERATION UINT8_C(100)
+#define BOARD_EMM_V5_ACCELERATION UINT8_C(20)
 /* EMM V5命令发送和四字节应答接收的单次超时，单位为ms。 */
 #define BOARD_EMM_V5_TIMEOUT_MS UINT32_C(500)
 /* 1.8度电机、16细分时，位置命令每圈需要3200个脉冲。 */
