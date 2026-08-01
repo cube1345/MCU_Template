@@ -29,6 +29,13 @@ int board_emm_v5_init(void);
 struct motor *board_emm_v5_get(void);
 
 /**
+ * @brief  设置板载EMM V5驱动器的协议使能状态。
+ * @param  enabled true表示使能，false表示失能。
+ * @retval PLATFORM_OK表示命令发送成功，其他值表示状态或通信错误。
+ */
+int board_emm_v5_enabled_set(bool enabled);
+
+/**
  * @brief  通过USART6读取板载EMM V5的实时位置。
  * @param  position_raw 用于接收实时位置原始值的变量。
  * @retval PLATFORM_OK表示读取成功，其他PLATFORM_*表示状态或通信错误。

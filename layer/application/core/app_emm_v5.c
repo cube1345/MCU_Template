@@ -41,6 +41,8 @@
 
 /* 球控任务写入、EMM任务读取的绝对位置邮箱，单位为度。 */
 static float s_target_position_deg;
+/* 按键任务写入、EMM任务读取的驱动器使能请求，上电默认使能。 */
+static bool s_enabled_requested = true;
 /* true时由EMM任务立即停止电机，并暂停执行新的绝对位置目标。 */
 static bool s_hold_requested;
 
@@ -63,6 +65,18 @@ int emm_v5_target_position_deg_set(float position_deg)
   return PLATFORM_OK;
 }
 
+int emm_v5_enabled_request_set(bool enabled)
+{
+  taskENTER_CRITICAL();
+  s_enabled_requested = enabled;
+  if (!enabled) {
+    s_target_position_deg = 0.0F;
+    s_hold_requested = false;
+  }
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
 int emm_v5_hold_set(bool hold)
 {
   taskENTER_CRITICAL();
@@ -81,6 +95,16 @@ static void emm_v5_target_position_deg_get(float *position_deg)
   taskENTER_CRITICAL();
   *position_deg = s_target_position_deg;
   taskEXIT_CRITICAL();
+}
+
+static bool emm_v5_enabled_get(void)
+{
+  bool enabled;
+
+  taskENTER_CRITICAL();
+  enabled = s_enabled_requested;
+  taskEXIT_CRITICAL();
+  return enabled;
 }
 
 static bool emm_v5_hold_get(void)
@@ -175,6 +199,9 @@ void emm_v5_task(void *argument)
   int32_t position_raw;
   bool limit_active;
   bool previous_limit_active;
+  bool enabled_requested;
+  bool enabled_applied = true;
+  bool origin_reset_required = false;
 #if EMM_V5_BALL_POSITION_CONTROL_ENABLED
   float applied_ball_position_deg = 0.0F;
   bool ball_position_applied = false;
@@ -239,13 +266,59 @@ void emm_v5_task(void *argument)
   last_log_tick = last_wake_time;
 #endif
   for (;;) {
+    enabled_requested = emm_v5_enabled_get();
+    if (enabled_requested != enabled_applied) {
+      if (!enabled_requested) {
+        result = board_emm_v5_motion_stop();
+        if (result == PLATFORM_OK) {
+          result = board_emm_v5_enabled_set(false);
+        }
+      } else {
+        result = board_emm_v5_enabled_set(true);
+        if (result == PLATFORM_OK) {
+          origin_reset_required = true;
+        }
+      }
+      if (result != PLATFORM_OK) {
+        emm_v5_runtime_fail(motor, "enable set", result);
+        return;
+      }
+      enabled_applied = enabled_requested;
+#if EMM_V5_BALL_POSITION_CONTROL_ENABLED
+      ball_position_applied = false;
+      hold_applied = false;
+#endif
+      printf("[emm_v5] enabled=%u\r\n",
+             enabled_applied ? 1U : 0U);
+    }
+    if (!enabled_applied) {
+      vTaskDelayUntil(&last_wake_time,
+                      pdMS_TO_TICKS(EMM_V5_CONTROL_PERIOD_MS));
+      continue;
+    }
+
     result = board_emm_v5_position_read(&position_raw);
     if (result != PLATFORM_OK) {
       emm_v5_runtime_fail(motor, "position read", result);
       return;
     }
     limit_active = board_emm_v5_position_is_limited();
-    if (limit_active != previous_limit_active) {
+    if (origin_reset_required) {
+      if (!limit_active) {
+        result = board_emm_v5_position_clear();
+        if (result != PLATFORM_OK) {
+          emm_v5_runtime_fail(motor, "position clear", result);
+          return;
+        }
+        position_raw = 0;
+        limit_active = false;
+        printf("[emm_v5] re-enabled position set to 0 deg\r\n");
+      } else {
+        printf("[emm_v5] re-enabled outside limit; position not cleared\r\n");
+      }
+      previous_limit_active = limit_active;
+      origin_reset_required = false;
+    } else if (limit_active != previous_limit_active) {
       if (limit_active) {
         printf("[emm_v5] position limit reached: raw=%ld limit=%ld\r\n",
                (long)position_raw,

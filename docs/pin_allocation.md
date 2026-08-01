@@ -53,6 +53,8 @@ TIM14 用作 HAL 系统时基，但不连接外部 GPIO。TIM14 本身仍属于�
 | PC5 | 红色 LED | GPIO | 输出，低电平点亮 | 已配置，当前保持熄灭 | `board_led.c` |
 | PC6 | EMM V5 TX | USART6_TX | AF8，推挽 | 步进电机低速调速任务 | `board_uart.c` |
 | PC7 | EMM V5 RX | USART6_RX | AF8 | 步进电机低速调速任务 | `board_uart.c` |
+| PE2 | EMM使能切换按键 | GPIO | 内部上拉输入，低电平按下 | 短按释放切换使能/失能 | `board_key.c` |
+| PE3 | 系统复位按键 | GPIO | 内部上拉输入，低电平按下 | 短按释放触发MCU软件复位 | `board_key.c` |
 | PD12 | 左编码器 A 相 | TIM4_CH1 | AF2，上拉输入 | 5 ms 速度闭环反馈 | `board_drive.c` |
 | PD13 | 左编码器 B 相 | TIM4_CH2 | AF2，上拉输入 | 5 ms 速度闭环反馈 | `board_drive.c` |
 | PD7 | 循迹输入 0（右排针 15） | GPIO | 上拉输入 | 5 ms 八路循迹控制 | `board_tracking.c` |

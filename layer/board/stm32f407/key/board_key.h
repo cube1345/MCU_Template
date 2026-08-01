@@ -22,4 +22,16 @@ int board_key_init(void);
  */
 struct key *board_key_user_get(void);
 
+/**
+ * @brief  获取PE2低有效EMM使能切换按键。
+ * @return 初始化成功后返回struct key *，否则返回NULL。
+ */
+struct key *board_key_emm_enable_get(void);
+
+/**
+ * @brief  获取PE3低有效系统复位按键。
+ * @return 初始化成功后返回struct key *，否则返回NULL。
+ */
+struct key *board_key_reset_get(void);
+
 #endif /* BOARD_KEY_H */

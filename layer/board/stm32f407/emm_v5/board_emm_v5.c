@@ -99,6 +99,14 @@ struct motor *board_emm_v5_get(void)
          emm_v5_soft_limit_get_motor(&s_emm_v5_soft_limit) : NULL;
 }
 
+int board_emm_v5_enabled_set(bool enabled)
+{
+  if (!s_emm_v5_bound) {
+    return PLATFORM_ERR_INVALID_STATE;
+  }
+  return emm_v5_enabled_set(&s_emm_v5, enabled);
+}
+
 /**
  * @brief  通过USART6读取板载EMM V5的实时位置。
  * @param  position_raw 用于接收实时位置原始值的变量。

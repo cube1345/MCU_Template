@@ -69,3 +69,11 @@ int stm32f4_init(void)
   s_initialized = true;
   return 0;
 }
+
+void stm32f4_system_reset(void)
+{
+  __disable_irq();
+  NVIC_SystemReset();
+  for (;;) {
+  }
+}

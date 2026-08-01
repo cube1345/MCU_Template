@@ -69,6 +69,14 @@ int emm_v5_init(struct emm_v5 *self,
 struct motor *emm_v5_get_motor(struct emm_v5 *self);
 
 /**
+ * @brief  通过串口设置EMM V5驱动器使能状态。
+ * @param  self 已启动的EMM V5对象。
+ * @param  enabled true表示使能，false表示失能。
+ * @retval PLATFORM_OK表示命令发送成功，其他值表示状态或通信错误。
+ */
+int emm_v5_enabled_set(struct emm_v5 *self, bool enabled);
+
+/**
  * @brief  设置EMM V5速度模式的目标转速。
  * @param  self 已启动的EMM V5对象。
  * @param  speed_rpm 范围-5000至5000，符号表示方向，单位为RPM。

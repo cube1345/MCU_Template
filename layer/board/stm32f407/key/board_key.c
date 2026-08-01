@@ -15,6 +15,8 @@
 #include <stddef.h>
 
 static struct key_gpio s_user_key;
+static struct key_gpio s_emm_enable_key;
+static struct key_gpio s_reset_key;
 static bool s_initialized;
 
 /**
@@ -40,6 +42,18 @@ int board_key_init(void)
     result = key_gpio_init(&s_user_key, "user_key",
                            STM32F4_PIN_PA0, PIN_MODE_INPUT, true);
   }
+  if (result == PLATFORM_OK) {
+    /* PE2使用内部上拉，按键按下时接地并呈低电平。 */
+    result = key_gpio_init(&s_emm_enable_key, "emm_enable_key",
+                           STM32F4_PIN_PE2,
+                           PIN_MODE_INPUT_PULLUP, false);
+  }
+  if (result == PLATFORM_OK) {
+    /* PE3使用内部上拉，按键按下时接地并呈低电平。 */
+    result = key_gpio_init(&s_reset_key, "reset_key",
+                           STM32F4_PIN_PE3,
+                           PIN_MODE_INPUT_PULLUP, false);
+  }
   if (result != PLATFORM_OK) {
     return result;
   }
@@ -56,4 +70,14 @@ int board_key_init(void)
 struct key *board_key_user_get(void)
 {
   return s_initialized ? &s_user_key.base : NULL;
+}
+
+struct key *board_key_emm_enable_get(void)
+{
+  return s_initialized ? &s_emm_enable_key.base : NULL;
+}
+
+struct key *board_key_reset_get(void)
+{
+  return s_initialized ? &s_reset_key.base : NULL;
 }

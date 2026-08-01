@@ -47,7 +47,7 @@ struct serial_monitor_task3_open_loop_config {
 #error "SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE must be 0 or 1"
 #endif
 
-/* 小球位置相关波形通道开关；默认只发送位置误差。 */
+/* 小球位置相关波形通道开关；默认全部关闭。 */
 #ifndef SERIAL_MONITOR_BALL_TARGET_X_WAVE_ENABLE
 #define SERIAL_MONITOR_BALL_TARGET_X_WAVE_ENABLE 0
 #endif
@@ -58,7 +58,7 @@ struct serial_monitor_task3_open_loop_config {
 #define SERIAL_MONITOR_BALL_POSITION_X_FILTERED_WAVE_ENABLE 0
 #endif
 #ifndef SERIAL_MONITOR_BALL_ERROR_X_WAVE_ENABLE
-#define SERIAL_MONITOR_BALL_ERROR_X_WAVE_ENABLE 1
+#define SERIAL_MONITOR_BALL_ERROR_X_WAVE_ENABLE 0
 #endif
 
 #if ((SERIAL_MONITOR_BALL_TARGET_X_WAVE_ENABLE != 0) && \

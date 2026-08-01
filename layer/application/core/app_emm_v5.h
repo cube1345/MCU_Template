@@ -18,6 +18,13 @@
 int emm_v5_target_position_deg_set(float position_deg);
 
 /**
+ * @brief  请求切换EMM驱动器使能状态。
+ * @param  enabled true表示使能，false表示停止后失能。
+ * @retval PLATFORM_OK表示请求已写入邮箱。
+ */
+int emm_v5_enabled_request_set(bool enabled);
+
+/**
  * @brief  请求EMM立即停止并暂停处理球控绝对位置目标。
  * @param  hold true表示停止并保持，false表示恢复执行最新位置目标。
  * @retval PLATFORM_OK表示请求已写入邮箱。

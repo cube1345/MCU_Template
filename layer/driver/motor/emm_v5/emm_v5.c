@@ -255,6 +255,24 @@ struct motor *emm_v5_get_motor(struct emm_v5 *self)
   return (self != NULL) ? &self->base : NULL;
 }
 
+int emm_v5_enabled_set(struct emm_v5 *self, bool enabled)
+{
+  uint8_t enable_frame[6];
+  int result;
+
+  result = emm_v5_ready_check(self);
+  if (result != PLATFORM_OK) {
+    return result;
+  }
+  enable_frame[0] = self->config.address;
+  enable_frame[1] = EMM_V5_COMMAND_ENABLE;
+  enable_frame[2] = EMM_V5_ENABLE_MAGIC;
+  enable_frame[3] = enabled ? UINT8_C(1) : UINT8_C(0);
+  enable_frame[4] = EMM_V5_SYNC_DISABLED;
+  enable_frame[5] = EMM_V5_FRAME_CHECKSUM;
+  return emm_v5_exchange(self, enable_frame, sizeof(enable_frame));
+}
+
 /**
  * @brief  设置EMM V5速度模式的目标转速。
  * @param  self 已启动的EMM V5对象。

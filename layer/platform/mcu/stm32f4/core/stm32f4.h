@@ -241,4 +241,10 @@ struct i2c_bus_config;
  * @return 0 表示成功或已经初始化，-1 表示时钟或后端注册失败。
  */
 int stm32f4_init(void);
+
+/**
+ * @brief  触发Cortex-M系统软件复位。
+ * @return 不返回。
+ */
+void stm32f4_system_reset(void);
 #endif /* STM32F4_H */

@@ -25,8 +25,18 @@
 #define BALL_CONTROL_PERIOD_MS UINT32_C(20)
 /* PID计算周期，单位为秒；必须与BALL_CONTROL_PERIOD_MS保持一致。 */
 #define BALL_CONTROL_DT_S (0.020F)
+#ifndef BALL_CONTROL_STATUS_LOG_ENABLE
+/* 1开启[ball_ctrl]周期状态日志，0关闭。 */
+#define BALL_CONTROL_STATUS_LOG_ENABLE 0
+#endif
+#if ((BALL_CONTROL_STATUS_LOG_ENABLE != 0) && \
+     (BALL_CONTROL_STATUS_LOG_ENABLE != 1))
+#error "BALL_CONTROL_STATUS_LOG_ENABLE must be 0 or 1"
+#endif
+#if (BALL_CONTROL_STATUS_LOG_ENABLE == 1)
 /* 小球控制状态调试信息的打印周期，单位为毫秒。 */
 #define BALL_CONTROL_PRINT_PERIOD_MS UINT32_C(100)
+#endif
 /* 进入到达状态允许的最大位置误差，单位为像素。 */
 #define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (2.0F)
 /* 退出到达状态的位置误差阈值，单位为像素；与进入阈值形成迟滞。 */
@@ -37,6 +47,8 @@
 #define BALL_CONTROL_POSITION_FILTER_ALPHA (0.8F)
 /* STM32位置差分速度低通滤波的新样本权重。 */
 #define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.3F)
+/* 位置误差不超过该值时才允许积分，单位为像素。 */
+#define BALL_CONTROL_INTEGRAL_SEPARATION_ERROR_PX (50.0F)
 /* 小球静止但仍有位置误差时，临时使用的比例增益。 */
 #define BALL_CONTROL_STATIC_FRICTION_KP (0.2F)
 /* 低于该速度时允许进入静摩擦补偿，单位为像素每秒。 */
@@ -137,7 +149,9 @@ void ball_control_task(void *argument)
   struct low_pass_filter velocity_filter;
   TickType_t last_wake_time;
   TickType_t last_update_tick;
+#if (BALL_CONTROL_STATUS_LOG_ENABLE == 1)
   TickType_t last_print_tick;
+#endif
   TickType_t current_tick;
   float update_dt_s;
   float previous_filtered_x = 0.0F;
@@ -180,7 +194,9 @@ void ball_control_task(void *argument)
 
   last_wake_time = xTaskGetTickCount();
   last_update_tick = last_wake_time;
+#if (BALL_CONTROL_STATUS_LOG_ENABLE == 1)
   last_print_tick = last_wake_time;
+#endif
   for (;;) {
     ball_control_settings_get(&status.target_x, &velocity_damping,
                               &pid_enabled, &open_loop_enabled,
@@ -295,6 +311,13 @@ void ball_control_task(void *argument)
           status.velocity_damping_deg = 0.0F;
           static_friction_compensation_active = false;
         } else {
+          if (math_abs_float(position_error) <=
+              BALL_CONTROL_INTEGRAL_SEPARATION_ERROR_PX) {
+            position_controller.config.ki = applied_position_ki;
+          } else {
+            position_controller.config.ki = 0.0F;
+            position_controller.integral = 0.0F;
+          }
           if (static_friction_compensation_active) {
             if ((math_abs_float(status.filtered_velocity) >=
                  BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S) ||
@@ -369,6 +392,7 @@ void ball_control_task(void *argument)
           status.target_x, status.measured_x, status.filtered_x);
     }
 #endif
+#if (BALL_CONTROL_STATUS_LOG_ENABLE == 1)
     current_tick = xTaskGetTickCount();
     if ((current_tick - last_print_tick) >=
         pdMS_TO_TICKS(BALL_CONTROL_PRINT_PERIOD_MS)) {
@@ -391,6 +415,7 @@ void ball_control_task(void *argument)
              status.vision_valid ? 1U : 0U);
       last_print_tick = current_tick;
     }
+#endif
     vTaskDelayUntil(&last_wake_time,
                     pdMS_TO_TICKS(BALL_CONTROL_PERIOD_MS));
   }
