@@ -21,27 +21,30 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* 小球控制任务周期，单位为毫秒；当前对应50 Hz控制频率。 */
 #define BALL_CONTROL_PERIOD_MS UINT32_C(20)
+/* PID计算周期，单位为秒；必须与BALL_CONTROL_PERIOD_MS保持一致。 */
 #define BALL_CONTROL_DT_S (0.020F)
+/* 小球控制状态调试信息的打印周期，单位为毫秒。 */
 #define BALL_CONTROL_PRINT_PERIOD_MS UINT32_C(100)
-#define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (20.0F)
+/* 进入到达状态允许的最大位置误差，单位为像素。 */
+#define BALL_CONTROL_ARRIVAL_POSITION_TOLERANCE_PX (2.0F)
+/* 退出到达状态的位置误差阈值，单位为像素；与进入阈值形成迟滞。 */
 #define BALL_CONTROL_ARRIVAL_EXIT_POSITION_TOLERANCE_PX (40.0F)
-#define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (80.0F)
+/* 进入到达状态允许的小球最大绝对速度，单位为像素每秒。 */
+#define BALL_CONTROL_ARRIVAL_VELOCITY_TOLERANCE_PX_S (50.0F)
 /* 小球位置低通滤波中新样本的权重，越小越平滑但位置环响应越慢。 */
 #define BALL_CONTROL_POSITION_FILTER_ALPHA (0.8F)
 /* STM32位置差分速度低通滤波的新样本权重。 */
 #define BALL_CONTROL_VELOCITY_FILTER_ALPHA (0.3F)
-/* 小球静止但仍有位置误差时，克服静摩擦所需的最小输出角度。 */
-#define BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG (5.0F)
+/* 小球静止但仍有位置误差时，临时使用的比例增益。 */
+#define BALL_CONTROL_STATIC_FRICTION_KP (0.2F)
 /* 低于该速度时允许进入静摩擦补偿，单位为像素每秒。 */
 #define BALL_CONTROL_STATIC_FRICTION_ENTER_VELOCITY_PX_S (10.0F)
 /* 高于该速度时退出补偿；与进入阈值形成迟滞以防频繁切换。 */
 #define BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S (20.0F)
 /* 位置误差不超过该值时禁止补偿，避免在目标附近持续推动小球。 */
-#define BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX (10.0F)
-/* 基础控制输出过小时方向不明确，此时不施加补偿。 */
-#define BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG (0.01F)
-
+#define BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX (30.0F)
 /* 位置误差到EMM绝对角度的PID参数，机械方向和增益需通过整机调试确认。 */
 static const struct pid_config s_position_pid_config = {
   .kp = BALL_CONTROL_POSITION_KP_DEFAULT,
@@ -290,9 +293,24 @@ void ball_control_task(void *argument)
           pid_reset(&position_controller);
           status.position_pid_output_deg = 0.0F;
           status.velocity_damping_deg = 0.0F;
-          status.output_position_deg = 0.0F;
           static_friction_compensation_active = false;
         } else {
+          if (static_friction_compensation_active) {
+            if ((math_abs_float(status.filtered_velocity) >=
+                 BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S) ||
+                (math_abs_float(position_error) <=
+                 BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX)) {
+              static_friction_compensation_active = false;
+            }
+          } else if ((math_abs_float(status.filtered_velocity) <=
+                      BALL_CONTROL_STATIC_FRICTION_ENTER_VELOCITY_PX_S) &&
+                     (math_abs_float(position_error) >
+                      BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX)) {
+            static_friction_compensation_active = true;
+          }
+          position_controller.config.kp =
+              static_friction_compensation_active ?
+              BALL_CONTROL_STATIC_FRICTION_KP : applied_position_kp;
           result = pid_update(&position_controller,
                               position_error,
                               update_dt_s,
@@ -305,31 +323,6 @@ void ball_control_task(void *argument)
         uncompensated_output_deg =
             status.position_pid_output_deg -
             status.velocity_damping_deg;
-        if (static_friction_compensation_active) {
-          if ((math_abs_float(status.filtered_velocity) >=
-               BALL_CONTROL_STATIC_FRICTION_EXIT_VELOCITY_PX_S) ||
-              (math_abs_float(position_error) <=
-               BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX) ||
-              (math_abs_float(uncompensated_output_deg) <=
-               BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG)) {
-            static_friction_compensation_active = false;
-          }
-        } else if ((math_abs_float(status.filtered_velocity) <=
-                    BALL_CONTROL_STATIC_FRICTION_ENTER_VELOCITY_PX_S) &&
-                   (math_abs_float(position_error) >
-                    BALL_CONTROL_STATIC_FRICTION_MIN_ERROR_PX) &&
-                   (math_abs_float(uncompensated_output_deg) >
-                    BALL_CONTROL_STATIC_FRICTION_MIN_OUTPUT_DEG)) {
-          static_friction_compensation_active = true;
-        }
-        if (static_friction_compensation_active &&
-            (math_abs_float(uncompensated_output_deg) <
-             BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG)) {
-          uncompensated_output_deg =
-              (uncompensated_output_deg > 0.0F) ?
-              BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG :
-              -BALL_CONTROL_STATIC_FRICTION_MIN_DRIVE_DEG;
-        }
         status.output_position_deg = math_clamp_float(
             uncompensated_output_deg,
             s_position_pid_config.output_min,
@@ -350,6 +343,9 @@ void ball_control_task(void *argument)
 
     /* PID浮点输出取整后写入邮箱，USART6命令由EMM任务串行发送。 */
     result = emm_v5_target_position_deg_set(status.output_position_deg);
+    if (result == PLATFORM_OK) {
+      result = emm_v5_hold_set(status.arrived);
+    }
     if (result != PLATFORM_OK) {
       pid_reset(&position_controller);
       status.position_pid_output_deg = 0.0F;
@@ -358,6 +354,7 @@ void ball_control_task(void *argument)
       status.arrived = false;
       static_friction_compensation_active = false;
       (void)emm_v5_target_position_deg_set(0.0F);
+      (void)emm_v5_hold_set(false);
     }
     ball_control_status_set(&status);
 #if (SERIAL_MONITOR_BALL_SPEED_WAVE_ENABLE == 1)

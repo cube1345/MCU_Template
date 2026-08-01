@@ -41,6 +41,8 @@
 
 /* 球控任务写入、EMM任务读取的绝对位置邮箱，单位为度。 */
 static float s_target_position_deg;
+/* true时由EMM任务立即停止电机，并暂停执行新的绝对位置目标。 */
+static bool s_hold_requested;
 
 /**
  * @brief  发布EMM绝对位置目标，由EMM任务通过USART6串行下发。
@@ -61,6 +63,14 @@ int emm_v5_target_position_deg_set(float position_deg)
   return PLATFORM_OK;
 }
 
+int emm_v5_hold_set(bool hold)
+{
+  taskENTER_CRITICAL();
+  s_hold_requested = hold;
+  taskEXIT_CRITICAL();
+  return PLATFORM_OK;
+}
+
 /**
  * @brief  获取球控任务最近发布的EMM绝对位置目标。
  * @param  position_deg 用于接收目标角度的变量，单位为度。
@@ -73,6 +83,16 @@ static void emm_v5_target_position_deg_get(float *position_deg)
   taskEXIT_CRITICAL();
 }
 
+static bool emm_v5_hold_get(void)
+{
+  bool hold;
+
+  taskENTER_CRITICAL();
+  hold = s_hold_requested;
+  taskEXIT_CRITICAL();
+  return hold;
+}
+
 /**
  * @brief  在目标变化时发送经过软件限位检查的EMM绝对位置命令。
  * @param  position_raw 最近一次编码器原始位置，用于拦截日志。
@@ -83,13 +103,15 @@ static void emm_v5_target_position_deg_get(float *position_deg)
 static int emm_v5_ball_position_target_apply(
     int32_t position_raw,
     float *applied_position_deg,
+    bool *position_applied,
     bool *position_blocked)
 {
   float requested_position_deg;
   int result;
 
   emm_v5_target_position_deg_get(&requested_position_deg);
-  if (requested_position_deg == *applied_position_deg) {
+  if (*position_applied &&
+      (requested_position_deg == *applied_position_deg)) {
     return PLATFORM_OK;
   }
   result = board_emm_v5_position_deg_set(requested_position_deg);
@@ -100,6 +122,7 @@ static int emm_v5_ball_position_target_apply(
     }
     *position_blocked = true;
     *applied_position_deg = requested_position_deg;
+    *position_applied = true;
     return PLATFORM_OK;
   }
   if (result != PLATFORM_OK) {
@@ -110,6 +133,7 @@ static int emm_v5_ball_position_target_apply(
   }
   *position_blocked = false;
   *applied_position_deg = requested_position_deg;
+  *position_applied = true;
   return PLATFORM_OK;
 }
 
@@ -152,8 +176,11 @@ void emm_v5_task(void *argument)
   bool limit_active;
   bool previous_limit_active;
 #if EMM_V5_BALL_POSITION_CONTROL_ENABLED
-  float applied_ball_position_deg = 1.0F;
+  float applied_ball_position_deg = 0.0F;
+  bool ball_position_applied = false;
   bool ball_position_blocked = false;
+  bool hold_requested;
+  bool hold_applied = false;
 #endif
 #if EMM_V5_WEIXIN_POSITION_CONTROL_ENABLED
   float requested_position_deg;
@@ -231,11 +258,28 @@ void emm_v5_task(void *argument)
     }
 
 #if EMM_V5_BALL_POSITION_CONTROL_ENABLED
-    result = emm_v5_ball_position_target_apply(
-        position_raw, &applied_ball_position_deg,
-        &ball_position_blocked);
+    hold_requested = emm_v5_hold_get();
+    if (hold_requested) {
+      if (!hold_applied) {
+        result = board_emm_v5_motion_stop();
+        if (result == PLATFORM_OK) {
+          hold_applied = true;
+          ball_position_applied = false;
+        }
+      } else {
+        result = PLATFORM_OK;
+      }
+    } else {
+      hold_applied = false;
+      result = emm_v5_ball_position_target_apply(
+          position_raw, &applied_ball_position_deg,
+          &ball_position_applied, &ball_position_blocked);
+    }
     if (result != PLATFORM_OK) {
-      emm_v5_runtime_fail(motor, "ball position set", result);
+      emm_v5_runtime_fail(motor,
+                          hold_requested ? "ball hold" :
+                          "ball position set",
+                          result);
       return;
     }
 #endif
