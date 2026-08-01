@@ -17,6 +17,7 @@
 static struct key_gpio s_user_key;
 static struct key_gpio s_emm_enable_key;
 static struct key_gpio s_reset_key;
+static struct key_gpio s_recording_stop_key;
 static bool s_initialized;
 
 /**
@@ -54,6 +55,12 @@ int board_key_init(void)
                            STM32F4_PIN_PE3,
                            PIN_MODE_INPUT_PULLUP, false);
   }
+  if (result == PLATFORM_OK) {
+    /* PE1使用内部上拉，按键按下时接地并呈低电平。 */
+    result = key_gpio_init(&s_recording_stop_key, "recording_stop_key",
+                           STM32F4_PIN_PE1,
+                           PIN_MODE_INPUT_PULLUP, false);
+  }
   if (result != PLATFORM_OK) {
     return result;
   }
@@ -80,4 +87,9 @@ struct key *board_key_emm_enable_get(void)
 struct key *board_key_reset_get(void)
 {
   return s_initialized ? &s_reset_key.base : NULL;
+}
+
+struct key *board_key_recording_stop_get(void)
+{
+  return s_initialized ? &s_recording_stop_key.base : NULL;
 }

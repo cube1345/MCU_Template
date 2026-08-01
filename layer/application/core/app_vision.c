@@ -176,6 +176,16 @@ int vision_send_task_frame(uint8_t data1, uint8_t data2)
                     VISION_TX_TIMEOUT_MS);
 }
 
+int vision_recording_start(void)
+{
+  return vision_send_task_frame(UINT8_C(0xBB), UINT8_C(0xBB));
+}
+
+int vision_recording_stop(void)
+{
+  return vision_send_task_frame(UINT8_C(0xCC), UINT8_C(0xCC));
+}
+
 void vision_task(void *argument)
 {
   struct vision_rx_event event;

@@ -43,4 +43,10 @@ int vision_get_ball_data(struct vision_ball_data *data);
  */
 int vision_send_task_frame(uint8_t data1, uint8_t data2);
 
+/** @brief 通知Jetson开始录像，发送 AA BB BB FF。 */
+int vision_recording_start(void);
+
+/** @brief 通知Jetson停止录像，发送 AA CC CC FF。 */
+int vision_recording_stop(void);
+
 #endif /* APP_VISION_H */

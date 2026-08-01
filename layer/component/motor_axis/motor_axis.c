@@ -311,8 +311,10 @@ static int motor_axis_set_speed(struct motor *base, int32_t speed)
   struct motor_axis *self =
       container_of(base, struct motor_axis, base);
 
-  /* 仅在切入速度模式时清积分，连续调速时保留 PI 控制状态。 */
-  if (self->control_mode != MOTOR_AXIS_MODE_SPEED) {
+  /* 切入速度模式或由非零目标停车时清积分。 */
+  if ((self->control_mode != MOTOR_AXIS_MODE_SPEED) ||
+      ((speed == INT32_C(0)) &&
+       (self->target_speed != INT32_C(0)))) {
     self->speed_integral = 0.0f;
   }
   self->target_speed = speed;

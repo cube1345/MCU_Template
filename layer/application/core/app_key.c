@@ -7,6 +7,7 @@
 #include "app_ball_control.h"
 #include "app_emm_v5.h"
 #include "app_mission.h"
+#include "app_vision.h"
 
 #include "board_key.h"
 #include "key_event.h"
@@ -27,6 +28,7 @@
 static struct key_event s_user_key_event;
 static struct key_event s_emm_enable_key_event;
 static struct key_event s_reset_key_event;
+static struct key_event s_recording_stop_key_event;
 
 /**
  * @brief  运行用户按键事件轮询任务。
@@ -39,12 +41,14 @@ void key_task(void *argument)
   struct key *user_key;
   struct key *emm_enable_key;
   struct key *reset_key;
+  struct key *recording_stop_key;
   TickType_t last_wake_time;
   bool emm_enabled = true;
   int result;
   int event;
   int emm_event;
   int reset_event;
+  int recording_stop_event;
 
   (void)argument;
 
@@ -58,8 +62,9 @@ void key_task(void *argument)
   user_key = board_key_user_get();
   emm_enable_key = board_key_emm_enable_get();
   reset_key = board_key_reset_get();
+  recording_stop_key = board_key_recording_stop_get();
   if ((user_key == NULL) || (emm_enable_key == NULL) ||
-      (reset_key == NULL)) {
+      (reset_key == NULL) || (recording_stop_key == NULL)) {
     printf("[key] get failed\r\n");
     vTaskDelete(NULL);
     return;
@@ -81,6 +86,13 @@ void key_task(void *argument)
                           emm_enable_key);
   if (result != PLATFORM_OK) {
     printf("[key] emm event init failed: %d\r\n", result);
+    vTaskDelete(NULL);
+    return;
+  }
+  result = key_event_init(&s_recording_stop_key_event,
+                          recording_stop_key);
+  if (result != PLATFORM_OK) {
+    printf("[key] recording stop event init failed: %d\r\n", result);
     vTaskDelete(NULL);
     return;
   }
@@ -127,6 +139,16 @@ void key_task(void *argument)
       stm32f4_system_reset();
     } else if (reset_event < PLATFORM_OK) {
       printf("[key] reset event failed: %d\r\n", reset_event);
+    }
+    recording_stop_event = key_event_poll(&s_recording_stop_key_event);
+    if (recording_stop_event == KEY_EVENT_SHORT_RELEASE) {
+      result = vision_recording_stop();
+      if (result != PLATFORM_OK) {
+        printf("[key] recording stop failed: %d\r\n", result);
+      }
+    } else if (recording_stop_event < PLATFORM_OK) {
+      printf("[key] recording stop event failed: %d\r\n",
+             recording_stop_event);
     }
     vTaskDelayUntil(&last_wake_time,
                     pdMS_TO_TICKS(KEY_PERIOD_MS));

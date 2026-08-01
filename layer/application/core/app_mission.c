@@ -4,6 +4,7 @@
 #include "app_ball_control.h"
 #include "app_serial_monitor.h"
 #include "app_tracking.h"
+#include "app_vision.h"
 #include "result.h"
 
 #include "FreeRTOS.h"
@@ -21,6 +22,8 @@
 #define MISSION_EVENT_QUEUE_LENGTH 8U
 /* 任务状态机检查传感器和阶段切换的周期，单位为毫秒。 */
 #define MISSION_MONITOR_PERIOD_MS UINT32_C(10)
+/* Delay task motion so Jetson can start recording first. */
+#define MISSION_RECORDING_START_DELAY_MS UINT32_C(1000)
 
 /* 任务2子阶段：等待车辆完全离开起点的宽黑线。 */
 #define MISSION_TASK2_WAIT_START_CLEAR UINT8_C(0)
@@ -67,7 +70,9 @@
 /* 任务2循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
 #define MISSION_TASK2_TRACKING_SPEED INT32_C(95000)
 /* 任务4循迹时左右轮的平均基础速度，单位为编码器计数每秒。 */
-#define MISSION_TASK4_TRACKING_SPEED INT32_C(60000)
+#define MISSION_TASK4_TRACKING_SPEED INT32_C(80000)
+/* Task 4 linear acceleration time from zero to tracking speed. */
+#define MISSION_TASK4_STARTUP_RAMP_MS UINT32_C(3000)
 /* 任务4启动后自动停止小车的时间，单位为毫秒。 */
 #define MISSION_TASK4_AUTO_STOP_MS UINT32_C(8000)
 /* 任务4的小球视觉X目标，2表示当前标定的摆杆中心点。 */
@@ -295,8 +300,7 @@ static int mission_selected_start(uint8_t selected_task)
           (selected_task == UINT8_C(4)) ?
           s_task4_tracking_weights :
           s_task5_tracking_weights,
-          (selected_task == UINT8_C(4)) ?
-          APP_TRACKING_OUTPUT_SCALE_MAX : UINT16_C(0));
+          UINT16_C(0));
     }
     return result;
   case UINT8_C(6):
@@ -320,11 +324,18 @@ static void mission_start(void)
 {
   uint8_t selected_task;
   int result;
+  int recording_result;
 
   taskENTER_CRITICAL();
   selected_task = s_snapshot.selected_task;
   taskEXIT_CRITICAL();
 
+  recording_result = vision_recording_start();
+  if (recording_result != PLATFORM_OK) {
+    printf("[mission] recording start failed: %d\r\n",
+           recording_result);
+  }
+  vTaskDelay(pdMS_TO_TICKS(MISSION_RECORDING_START_DELAY_MS));
   result = mission_selected_start(selected_task);
   taskENTER_CRITICAL();
   s_snapshot.substep = UINT8_C(0);
@@ -335,6 +346,7 @@ static void mission_start(void)
   s_started_tick = xTaskGetTickCount();
   s_tracking_startup_ramp_started_tick = s_started_tick;
   s_tracking_startup_ramp_complete =
+      (selected_task != UINT8_C(4)) &&
       (selected_task != UINT8_C(5)) &&
       (selected_task != UINT8_C(6));
   s_snapshot.revision++;
@@ -607,10 +619,13 @@ static void mission_task3_update(uint8_t substep)
   }
 }
 
+static void mission_tracking_startup_update(uint32_t ramp_duration_ms);
+
 static void mission_task4_update(void)
 {
   TickType_t elapsed_ticks = xTaskGetTickCount() - s_started_tick;
 
+  mission_tracking_startup_update(MISSION_TASK4_STARTUP_RAMP_MS);
   if (elapsed_ticks >= pdMS_TO_TICKS(MISSION_TASK4_AUTO_STOP_MS)) {
     /* Keep ball control enabled at the centre after the car stops. */
     mission_complete(true);

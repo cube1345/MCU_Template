@@ -34,4 +34,10 @@ struct key *board_key_emm_enable_get(void);
  */
 struct key *board_key_reset_get(void);
 
+/**
+ * @brief 获取PE1低有效录像停止按键。
+ * @return 初始化成功后返回struct key *，否则返回NULL。
+ */
+struct key *board_key_recording_stop_get(void);
+
 #endif /* BOARD_KEY_H */
