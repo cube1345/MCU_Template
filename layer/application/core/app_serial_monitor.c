@@ -88,7 +88,7 @@ static int32_t s_ball_target_x;
 /* WEIXIN设置的视觉速度到EMM反向制动角度比例。 */
 static float s_ball_velocity_damping =
     BALL_CONTROL_VELOCITY_DAMPING_DEFAULT;
-/* 任务3纯开环参数；任务开始时由状态机读取一次快照。 */
+/* 任务3前半段开环参数；任务开始时由状态机读取一次快照。 */
 static struct serial_monitor_task3_open_loop_config
     s_task3_open_loop_config = {
   .positive_drive_angle_deg = 20.0F,
@@ -102,6 +102,7 @@ static struct serial_monitor_task3_open_loop_config
   .negative_brake_angle_deg = 20.0F,
   .negative_brake_time_ms = UINT32_C(400),
   .hold_angle_deg = 0.0F,
+  .hold_time_ms = UINT32_C(200),
 };
 /* 上位机请求的EMM绝对位置，单位为度。 */
 static float s_emm_position_deg;
@@ -325,6 +326,14 @@ static const struct weixin_param s_params[] = {
     .value = &s_task3_open_loop_config.hold_angle_deg,
     .minimum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MIN,
     .maximum = BALL_CONTROL_OPEN_LOOP_POSITION_DEG_MAX,
+    .writable = true,
+  },
+  {
+    .name = "task3.hold_ms",
+    .type = WEIXIN_PARAM_TYPE_U32,
+    .value = &s_task3_open_loop_config.hold_time_ms,
+    .minimum = 0.0,
+    .maximum = SERIAL_MONITOR_TASK3_PHASE_TIME_MAX_MS,
     .writable = true,
   },
   {

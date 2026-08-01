@@ -21,6 +21,7 @@ struct serial_monitor_task3_open_loop_config {
   float negative_brake_angle_deg;
   uint32_t negative_brake_time_ms;
   float hold_angle_deg;
+  uint32_t hold_time_ms;
 };
 
 /*
@@ -132,7 +133,7 @@ int serial_monitor_ball_target_x_set(int16_t target_x);
 int serial_monitor_ball_velocity_damping_get(float *velocity_damping);
 
 /**
- * @brief  获取任务3纯定时开环控制参数快照。
+ * @brief  获取任务3前半段定时开环控制参数快照。
  * @param  config 用于接收各段动作的角度、时间和最终保持角度。
  * @return PLATFORM_OK表示成功，参数为空时返回参数错误。
  */
