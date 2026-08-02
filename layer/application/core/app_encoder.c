@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 左右编码器累计计数的读取周期，单位为毫秒。 */
 #define ENCODER_PERIOD_MS UINT32_C(20)
 

@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 单次快照支持的最大任务数量，超过上限时明确报告，不输出不完整数据。 */
 #define FREERTOS_MONITOR_MAX_TASKS UINT32_C(24)
 
@@ -266,6 +268,7 @@ void Show_System_Stats(void)
     window_total_cycles = total_run_time_cycles;
   }
   total_run_time_us = freertos_monitor_cycles_to_us(total_run_time_cycles);
+  (void)total_run_time_us;
 
   printf("\r\n====================== FreeRTOS Monitor ======================\r\n");
   printf("System Total RunTime: %llu us\r\n",
@@ -298,6 +301,9 @@ void Show_System_Stats(void)
         s_task_status[index].ulRunTimeCounter, total_run_time_cycles);
     win_percent_x100 = freertos_monitor_percent_x100_get(
         window_task_cycles, window_total_cycles);
+    (void)task_run_time_us;
+    (void)avg_percent_x100;
+    (void)win_percent_x100;
 
     printf("%-12s %-6s %-5lu %-8lu %-12llu %3lu.%02lu%% %3lu.%02lu%%\r\n",
            s_task_status[index].pcTaskName,
@@ -317,6 +323,7 @@ void Show_System_Stats(void)
 
   free_heap = xPortGetFreeHeapSize();
   min_free_heap = xPortGetMinimumEverFreeHeapSize();
+  (void)free_heap;
 
   printf("--------------------------------------------------------------\r\n");
   printf("Memory Summary:\r\n");

@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 应用层允许发布的单轮目标速度绝对值，单位为编码器计数每秒。 */
 #define MOTOR_TARGET_SPEED_LIMIT INT32_C(200000)
 

@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 #define OLED_POLL_PERIOD_MS UINT32_C(100)
 #define OLED_POWER_STABLE_DELAY_MS UINT32_C(50)
 

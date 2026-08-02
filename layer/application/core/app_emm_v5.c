@@ -19,6 +19,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 编码器位置安全检查周期，单位为ms。 */
 #define EMM_V5_CONTROL_PERIOD_MS UINT32_C(20)
 /* 1表示周期打印position_raw，0表示关闭周期日志但继续执行限位检测。 */

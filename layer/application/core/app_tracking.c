@@ -19,6 +19,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 循迹输入和目标速度的更新周期，单位为毫秒。 */
 #define TRACKING_CONTROL_PERIOD_MS UINT32_C(5)
 /* Consecutive samples required to confirm entering or leaving a stop marker. */

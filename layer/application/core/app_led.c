@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 板载蓝色 LED 的翻转周期，单位为毫秒。 */
 #define LED_PERIOD_MS UINT32_C(1000)
 

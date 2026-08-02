@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 竞赛任务总数，OLED选择编号范围为1至6。 */
 #define MISSION_COUNT UINT8_C(6)
 /* 按键事件队列最多缓存的事件数量。 */

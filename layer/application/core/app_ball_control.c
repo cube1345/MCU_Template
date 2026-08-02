@@ -21,6 +21,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 小球控制任务周期，单位为毫秒；当前对应50 Hz控制频率。 */
 #define BALL_CONTROL_PERIOD_MS UINT32_C(20)
 /* PID计算周期，单位为秒；必须与BALL_CONTROL_PERIOD_MS保持一致。 */

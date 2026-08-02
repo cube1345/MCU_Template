@@ -32,6 +32,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "app_log.h"
+
 /* 栈深度单位为 StackType_t，不是字节。 */
 #define LED_STACK_DEPTH (configMINIMAL_STACK_SIZE)
 #define KEY_STACK_DEPTH (configMINIMAL_STACK_SIZE * 2U)
@@ -97,11 +99,13 @@ int tasks_create(void)
                   SERIAL_MONITOR_PRIORITY, NULL) != pdPASS) {
     return PLATFORM_ERR_IO;
   }
+#if (APP_SYSTEM_STATS_ENABLE == 1)
   if (xTaskCreate(system_stats_task, "sys_stats",
                   SYSTEM_STATS_STACK_DEPTH, NULL,
                   SYSTEM_STATS_PRIORITY, NULL) != pdPASS) {
     return PLATFORM_ERR_IO;
   }
+#endif
   if (xTaskCreate(led_task, "led", LED_STACK_DEPTH,
                   NULL, LED_PRIORITY, NULL) != pdPASS) {
     return PLATFORM_ERR_IO;

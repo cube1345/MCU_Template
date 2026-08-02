@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app_log.h"
+
 /* 固件版本编码为 major * 10000 + minor * 100 + patch。 */
 #define SERIAL_MONITOR_FIRMWARE_VERSION UINT32_C(10000)
 /* UART 单次协议响应的发送超时，单位为毫秒。 */
@@ -906,12 +908,17 @@ static bool serial_monitor_command_handle(
 {
   (void)context;
 
+#if (APP_SYSTEM_STATS_ENABLE == 1)
   if ((argument_count == UINT8_C(2)) &&
       (strcmp(arguments[0], "system") == 0) &&
       (strcmp(arguments[1], "status") == 0)) {
     system_stats_report_request();
     return true;
   }
+#else
+  (void)argument_count;
+  (void)arguments;
+#endif
 
   return false;
 }

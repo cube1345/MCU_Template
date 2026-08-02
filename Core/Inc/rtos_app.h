@@ -10,6 +10,8 @@
 #ifndef __RTOS_APP_H
 #define __RTOS_APP_H
 
+#include "app_log.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
