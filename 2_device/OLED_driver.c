@@ -63,20 +63,12 @@ static uint8_t OLED_DisplayBuf[8][128];
 /*********************全局变量*/
 
 
-static OLED_SCL OLED_W_SCL = NULL;
-static OLED_SDA OLED_W_SDA = NULL;
 static oled_t g_default_oled;
 
-static void OLED_GPIO_Init(void);
-static void OLED_WriteCommand(uint8_t Command);
-static void OLED_WriteData(uint8_t *Data, uint8_t Count);
-static void OLED_SetCursor(uint8_t Page, uint8_t X);
-
-void OLED_I2C_Init(OLED_SCL SCL,OLED_SDA SDA)
-{
-	OLED_W_SCL=SCL;
-	OLED_W_SDA=SDA;
-}
+static void OLED_WaitPowerStable(void);
+static void OLED_WriteCommand(oled_t *me, uint8_t command);
+static void OLED_WriteData(oled_t *me, const uint8_t *data, uint8_t count);
+static void OLED_SetCursor(oled_t *me, uint8_t page, uint8_t x);
 
 static void OLED_Base_Init(void *me)
 {
@@ -106,7 +98,7 @@ static inline const oled_base_ops_t *OLED_GetBaseOps(void)
 
 void OLED_InitDevice(oled_t *me, const oled_cfg_t *cfg)
 {
-    if ((me == NULL) || (cfg == NULL) || (cfg->scl_write == NULL) || (cfg->sda_write == NULL)) {
+    if ((me == NULL) || (cfg == NULL) || (DeviceIic_IsValid(&cfg->iic) == false)) {
         return;
     }
 
@@ -114,7 +106,18 @@ void OLED_InitDevice(oled_t *me, const oled_cfg_t *cfg)
     me->cfg = *cfg;
     me->framebuffer = &OLED_DisplayBuf[0][0];
     me->base.is_init = 1U;
-    OLED_I2C_Init(me->cfg.scl_write, me->cfg.sda_write);
+}
+
+void OLED_BindDefaultIic(const device_iic_t *iic)
+{
+    oled_cfg_t cfg;
+
+    if (iic == (const device_iic_t *)0) {
+        return;
+    }
+
+    cfg.iic = *iic;
+    OLED_InitDevice(&g_default_oled, &cfg);
 }
 
 void OLED_ClearDevice(oled_t *me)
@@ -145,8 +148,8 @@ void OLED_UpdateDevice(oled_t *me)
 
     fb = (uint8_t (*)[128])me->framebuffer;
     for (j = 0; j < 8; j++) {
-        OLED_SetCursor(j, 0);
-        OLED_WriteData(fb[j], 128);
+        OLED_SetCursor(me, j, 0U);
+        OLED_WriteData(me, fb[j], 128U);
     }
 }
 
@@ -156,32 +159,36 @@ void OLED_InitDeviceEx(oled_t *me)
         return;
     }
 
-    OLED_I2C_Init(me->cfg.scl_write, me->cfg.sda_write);
-    OLED_GPIO_Init();
+    if ((me->base.is_init == 0U) ||
+        (DeviceIic_Init(&me->cfg.iic) != DEVICE_IIC_STATUS_OK)) {
+        return;
+    }
 
-    OLED_WriteCommand(0xAE);
-    OLED_WriteCommand(0xD5);
-    OLED_WriteCommand(0x80);
-    OLED_WriteCommand(0xA8);
-    OLED_WriteCommand(0x3F);
-    OLED_WriteCommand(0xD3);
-    OLED_WriteCommand(0x00);
-    OLED_WriteCommand(0x40);
-    OLED_WriteCommand(0xA1);
-    OLED_WriteCommand(0xC8);
-    OLED_WriteCommand(0xDA);
-    OLED_WriteCommand(0x12);
-    OLED_WriteCommand(0x81);
-    OLED_WriteCommand(0xCF);
-    OLED_WriteCommand(0xD9);
-    OLED_WriteCommand(0xF1);
-    OLED_WriteCommand(0xDB);
-    OLED_WriteCommand(0x30);
-    OLED_WriteCommand(0xA4);
-    OLED_WriteCommand(0xA6);
-    OLED_WriteCommand(0x8D);
-    OLED_WriteCommand(0x14);
-    OLED_WriteCommand(0xAF);
+    OLED_WaitPowerStable();
+
+    OLED_WriteCommand(me, 0xAEU);
+    OLED_WriteCommand(me, 0xD5U);
+    OLED_WriteCommand(me, 0x80U);
+    OLED_WriteCommand(me, 0xA8U);
+    OLED_WriteCommand(me, 0x3FU);
+    OLED_WriteCommand(me, 0xD3U);
+    OLED_WriteCommand(me, 0x00U);
+    OLED_WriteCommand(me, 0x40U);
+    OLED_WriteCommand(me, 0xA1U);
+    OLED_WriteCommand(me, 0xC8U);
+    OLED_WriteCommand(me, 0xDAU);
+    OLED_WriteCommand(me, 0x12U);
+    OLED_WriteCommand(me, 0x81U);
+    OLED_WriteCommand(me, 0xCFU);
+    OLED_WriteCommand(me, 0xD9U);
+    OLED_WriteCommand(me, 0xF1U);
+    OLED_WriteCommand(me, 0xDBU);
+    OLED_WriteCommand(me, 0x30U);
+    OLED_WriteCommand(me, 0xA4U);
+    OLED_WriteCommand(me, 0xA6U);
+    OLED_WriteCommand(me, 0x8DU);
+    OLED_WriteCommand(me, 0x14U);
+    OLED_WriteCommand(me, 0xAFU);
 
     OLED_ClearDevice(me);
     OLED_UpdateDevice(me);
@@ -189,119 +196,53 @@ void OLED_InitDeviceEx(oled_t *me)
 
 
 /**
-  * 函    数：OLED引脚初始化
-  * 参    数：无
-  * 返 回 值：无
-  * 说    明：当上层函数需要初始化时，此函数会被调用
-  *           用户需要将SCL和SDA引脚初始化为开漏模式，并释放引脚
+  * @brief  在 OLED 上电后保留原有的稳定等待窗口。
+  * @note   具体 GPIO 释放与 IIC 时序由 Board 注入的 transport 负责。
   */
-static void OLED_GPIO_Init(void)
+static void OLED_WaitPowerStable(void)
 {
-	uint32_t i, j;
+    volatile uint32_t outer_index;
+    volatile uint32_t inner_index;
 
-	/*在初始化前，加入适量延时，待OLED供电稳定*/
-	for (i = 0; i < 1000; i ++)
-	{
-		for (j = 0; j < 1000; j ++);
-	}
-
-
-	//在图形化配置界面完成GPIO配置
-
-	/*释放SCL和SDA*/
-	OLED_W_SCL(1);
-	OLED_W_SDA(1);
-}
-
-/*********************引脚配置*/
-
-
-/*通信协议*********************/
-
-/**
-  * 函    数：I2C起始
-  * 参    数：无
-  * 返 回 值：无
-  */
-void OLED_I2C_Start(void)
-{
-	OLED_W_SDA(1);		//释放SDA，确保SDA为高电平
-	OLED_W_SCL(1);		//释放SCL，确保SCL为高电平
-	OLED_W_SDA(0);		//在SCL高电平期间，拉低SDA，产生起始信号
-	OLED_W_SCL(0);		//起始后把SCL也拉低，即为了占用总线，也为了方便总线时序的拼接
+    for (outer_index = 0U; outer_index < 1000U; outer_index++) {
+        for (inner_index = 0U; inner_index < 1000U; inner_index++) {
+        }
+    }
 }
 
 /**
-  * 函    数：I2C终止
-  * 参    数：无
-  * 返 回 值：无
+  * @brief  通过已注入的 IIC endpoint 向 OLED 写入一条控制命令。
   */
-void OLED_I2C_Stop(void)
+static void OLED_WriteCommand(oled_t *me, uint8_t command)
 {
-	OLED_W_SDA(0);		//拉低SDA，确保SDA为低电平
-	OLED_W_SCL(1);		//释放SCL，使SCL呈现高电平
-	OLED_W_SDA(1);		//在SCL高电平期间，释放SDA，产生终止信号
+    uint8_t transfer_data[2];
+
+    if (me == (oled_t *)0) {
+        return;
+    }
+
+    transfer_data[0] = 0x00U;
+    transfer_data[1] = command;
+    (void)DeviceIic_Write(&me->cfg.iic, transfer_data, (uint16_t)sizeof(transfer_data));
 }
 
 /**
-  * 函    数：I2C发送一个字节
-  * 参    数：Byte 要发送的一个字节数据，范围：0x00~0xFF
-  * 返 回 值：无
+  * @brief  通过已注入的 IIC endpoint 连续写入 OLED 显存数据。
+  * @note   缓冲区包含 SSD1306 所需的 0x40 控制字节，因此保持单次 IIC 事务。
   */
-void OLED_I2C_SendByte(uint8_t Byte)
+static void OLED_WriteData(oled_t *me, const uint8_t *data, uint8_t count)
 {
-	uint8_t i;
+    static uint8_t transfer_data[129];
 
-	/*循环8次，主机依次发送数据的每一位*/
-	for (i = 0; i < 8; i++)
-	{
-		/*使用掩码的方式取出Byte的指定一位数据并写入到SDA线*/
-		/*两个!的作用是，让所有非零的值变为1*/
-		OLED_W_SDA(!!(Byte & (0x80 >> i)));
-		OLED_W_SCL(1);	//释放SCL，从机在SCL高电平期间读取SDA
-		OLED_W_SCL(0);	//拉低SCL，主机开始发送下一位数据
-	}
+    if ((me == (oled_t *)0) || (data == (const uint8_t *)0) || (count == 0U) ||
+        (count > (uint8_t)(sizeof(transfer_data) - 1U))) {
+        return;
+    }
 
-	OLED_W_SCL(1);		//额外的一个时钟，不处理应答信号
-	OLED_W_SCL(0);
+    transfer_data[0] = 0x40U;
+    (void)memcpy(&transfer_data[1], data, count);
+    (void)DeviceIic_Write(&me->cfg.iic, transfer_data, (uint16_t)count + 1U);
 }
-
-/**
-  * 函    数：OLED写命令
-  * 参    数：Command 要写入的命令值，范围：0x00~0xFF
-  * 返 回 值：无
-  */
-static void OLED_WriteCommand(uint8_t Command)
-{
-	OLED_I2C_Start();				//I2C起始
-	OLED_I2C_SendByte(0x78);		//发送OLED的I2C从机地址
-	OLED_I2C_SendByte(0x00);		//控制字节，给0x00，表示即将写命令
-	OLED_I2C_SendByte(Command);		//写入指定的命令
-	OLED_I2C_Stop();				//I2C终止
-}
-
-/**
-  * 函    数：OLED写数据
-  * 参    数：Data 要写入数据的起始地址
-  * 参    数：Count 要写入数据的数量
-  * 返 回 值：无
-  */
-static void OLED_WriteData(uint8_t *Data, uint8_t Count)
-{
-	uint8_t i;
-
-	OLED_I2C_Start();				//I2C起始
-	OLED_I2C_SendByte(0x78);		//发送OLED的I2C从机地址
-	OLED_I2C_SendByte(0x40);		//控制字节，给0x40，表示即将写数据
-	/*循环Count次，进行连续的数据写入*/
-	for (i = 0; i < Count; i ++)
-	{
-		OLED_I2C_SendByte(Data[i]);	//依次发送Data的每一个数据
-	}
-	OLED_I2C_Stop();				//I2C终止
-}
-
-/*********************通信协议*/
 
 
 /*硬件配置*********************/
@@ -324,7 +265,7 @@ void OLED_Init(void)
   * 返 回 值：无
   * 说    明：OLED默认的Y轴，只能8个Bit为一组写入，即1页等于8个Y轴坐标
   */
-static void OLED_SetCursor(uint8_t Page, uint8_t X)
+static void OLED_SetCursor(oled_t *me, uint8_t page, uint8_t x)
 {
 	/*如果使用此程序驱动1.3寸的OLED显示屏，则需要解除此注释*/
 	/*因为1.3寸的OLED驱动芯片（SH1106）有132列*/
@@ -333,9 +274,9 @@ static void OLED_SetCursor(uint8_t Page, uint8_t X)
 //	X += 2;
 
 	/*通过指令设置页地址和列地址*/
-	OLED_WriteCommand(0xB0 | Page);					//设置页位置
-	OLED_WriteCommand(0x10 | ((X & 0xF0) >> 4));	//设置X位置高4位
-	OLED_WriteCommand(0x00 | (X & 0x0F));			//设置X位置低4位
+	OLED_WriteCommand(me, 0xB0U | page);					//设置页位置
+	OLED_WriteCommand(me, 0x10U | ((x & 0xF0U) >> 4));	//设置X位置高4位
+	OLED_WriteCommand(me, 0x00U | (x & 0x0FU));			//设置X位置低4位
 }
 
 /*********************硬件配置*/
@@ -469,9 +410,9 @@ void OLED_UpdateArea(int16_t X, int16_t Y, uint8_t Width, uint8_t Height)
 		if (X >= 0 && X <= 127 && j >= 0 && j <= 7)		//超出屏幕的内容不显示
 		{
 			/*设置光标位置为相关页的指定列*/
-			OLED_SetCursor(j, X);
+			OLED_SetCursor(&g_default_oled, (uint8_t)j, (uint8_t)X);
 			/*连续写入Width个数据，将显存数组的数据写入到OLED硬件*/
-			OLED_WriteData(&OLED_DisplayBuf[j][X], Width);
+			OLED_WriteData(&g_default_oled, &OLED_DisplayBuf[j][X], Width);
 		}
 	}
 }

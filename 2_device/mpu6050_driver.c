@@ -1,11 +1,10 @@
 #include "mpu6050_driver.h"
 
-#include "hal_iic.h"
 #include "my_system_lib.h"
 
 static mpu6050_init_config_t g_mpu6050_current_config;
 static bool g_mpu6050_has_current_config = false;
-static const mpu6050_i2c_ops_t *g_i2c = ((const mpu6050_i2c_ops_t *)0);
+static const device_iic_t *g_iic = ((const device_iic_t *)0);
 
 static int32_t MPU6050_Base_Init(void *me)
 {
@@ -39,7 +38,8 @@ static inline const mpu6050_base_ops_t *MPU6050_GetBaseOps(void)
 
 void MPU6050_InitDevice(mpu6050_t *me, const mpu6050_cfg_t *cfg)
 {
-    if ((me == (mpu6050_t *)0) || (cfg == (const mpu6050_cfg_t *)0)) {
+    if ((me == (mpu6050_t *)0) || (cfg == (const mpu6050_cfg_t *)0) ||
+        (DeviceIic_IsValid(&cfg->iic) == false)) {
         return;
     }
 
@@ -47,7 +47,7 @@ void MPU6050_InitDevice(mpu6050_t *me, const mpu6050_cfg_t *cfg)
     me->cfg = *cfg;
     me->base.is_init = 1U;
 
-    g_i2c = cfg->i2c;
+    g_iic = &me->cfg.iic;
 }
 
 int32_t MPU6050_ReadRawDevice(mpu6050_t *me, mpu6050_raw_data_t *raw_data)
@@ -76,13 +76,13 @@ int32_t MPU6050_ReadScaledDevice(mpu6050_t *me, mpu6050_scaled_data_t *scaled_da
     return (int32_t)mpu6050_convert_raw_data(&me->cfg.init_config, &raw_data, scaled_data);
 }
 
-static mpu6050_status_t mpu6050_convert_int_status(int32_t int_status)
+static mpu6050_status_t mpu6050_convert_iic_status(device_iic_status_t iic_status)
 {
-    if (int_status == (int32_t)HAL_IIC_STATUS_OK) {
+    if (iic_status == DEVICE_IIC_STATUS_OK) {
         return MPU6050_STATUS_OK;
     }
 
-    if (int_status == (int32_t)HAL_IIC_STATUS_ERROR_PARAM) {
+    if (iic_status == DEVICE_IIC_STATUS_ERROR_PARAM) {
         return MPU6050_STATUS_ERROR_PARAM;
     }
 
@@ -157,10 +157,10 @@ static void mpu6050_store_current_config(const mpu6050_init_config_t *init_confi
 
 mpu6050_status_t mpu6050_write_reg(uint8_t reg_addr, uint8_t reg_data)
 {
-    if ((g_i2c == ((const mpu6050_i2c_ops_t *)0)) || (g_i2c->write_reg == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return MPU6050_STATUS_ERROR_COMM;
     }
-    return mpu6050_convert_int_status(g_i2c->write_reg(reg_addr, reg_data));
+    return mpu6050_convert_iic_status(DeviceIic_WriteReg8(g_iic, reg_addr, reg_data));
 }
 
 mpu6050_status_t mpu6050_read_reg(uint8_t reg_addr, uint8_t *reg_data)
@@ -169,10 +169,10 @@ mpu6050_status_t mpu6050_read_reg(uint8_t reg_addr, uint8_t *reg_data)
         return MPU6050_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const mpu6050_i2c_ops_t *)0)) || (g_i2c->read_reg == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return MPU6050_STATUS_ERROR_COMM;
     }
-    return mpu6050_convert_int_status(g_i2c->read_reg(reg_addr, reg_data));
+    return mpu6050_convert_iic_status(DeviceIic_ReadReg8(g_iic, reg_addr, reg_data));
 }
 
 mpu6050_status_t mpu6050_write_regs(uint8_t reg_addr,
@@ -182,10 +182,11 @@ mpu6050_status_t mpu6050_write_regs(uint8_t reg_addr,
         return MPU6050_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const mpu6050_i2c_ops_t *)0)) || (g_i2c->write_regs == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return MPU6050_STATUS_ERROR_COMM;
     }
-    return mpu6050_convert_int_status(g_i2c->write_regs(reg_addr, write_data, write_length));
+    return mpu6050_convert_iic_status(
+        DeviceIic_WriteReg8s(g_iic, reg_addr, write_data, write_length));
 }
 
 mpu6050_status_t mpu6050_read_regs(uint8_t reg_addr,
@@ -195,10 +196,11 @@ mpu6050_status_t mpu6050_read_regs(uint8_t reg_addr,
         return MPU6050_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const mpu6050_i2c_ops_t *)0)) || (g_i2c->read_regs == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return MPU6050_STATUS_ERROR_COMM;
     }
-    return mpu6050_convert_int_status(g_i2c->read_regs(reg_addr, read_data, read_length));
+    return mpu6050_convert_iic_status(
+        DeviceIic_ReadReg8s(g_iic, reg_addr, read_data, read_length));
 }
 
 mpu6050_status_t mpu6050_get_who_am_i(uint8_t *who_am_i)
@@ -215,10 +217,10 @@ mpu6050_status_t mpu6050_check_id(void)
     mpu6050_status_t driver_status;
     uint8_t who_am_i = 0U;
 
-    if ((g_i2c == ((const mpu6050_i2c_ops_t *)0)) || (g_i2c->check_device == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return MPU6050_STATUS_ERROR_COMM;
     }
-    driver_status = mpu6050_convert_int_status(g_i2c->check_device());
+    driver_status = mpu6050_convert_iic_status(DeviceIic_Probe(g_iic));
     if (driver_status != MPU6050_STATUS_OK) {
         return driver_status;
     }
@@ -279,8 +281,9 @@ mpu6050_status_t mpu6050_init_with_config(const mpu6050_init_config_t *init_conf
     accel_config = mpu6050_build_accel_config(init_config->accel_fs);
     dlpf_config = mpu6050_build_dlpf_config(init_config->dlpf_cfg);
 
-    if ((g_i2c != ((const mpu6050_i2c_ops_t *)0)) && (g_i2c->init != ((void *)0))) {
-        g_i2c->init();
+    driver_status = mpu6050_convert_iic_status(DeviceIic_Init(g_iic));
+    if (driver_status != MPU6050_STATUS_OK) {
+        return driver_status;
     }
 
     driver_status = mpu6050_write_reg(MPU6050_REG_PWR_MGMT_1, MPU6050_PWR_MGMT_1_WAKEUP);

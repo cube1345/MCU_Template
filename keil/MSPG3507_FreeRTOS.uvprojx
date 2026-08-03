@@ -1001,6 +1001,16 @@
               <FilePath>..\3_board\motor_board.c</FilePath>
             </File>
             <File>
+              <FileName>iic_board.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\3_board\iic_board.c</FilePath>
+            </File>
+            <File>
+              <FileName>iic_board.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\3_board\iic_board.h</FilePath>
+            </File>
+            <File>
               <FileName>icm42688_board.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\3_board\icm42688_board.c</FilePath>

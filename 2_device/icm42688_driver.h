@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "device_base.h"
+#include "device_iic.h"
 #include "device_ops.h"
 
 /* ICM42688 DEVICE_CONFIG 寄存器地址，用于软件复位。 */
@@ -180,22 +181,6 @@ typedef struct
 typedef struct icm42688_s icm42688_t;
 typedef device_sensor_ops_t icm42688_base_ops_t;
 
-/**
-  * @brief I2C 传输操作函数指针表，由 Board 层实现并注入 Device 层。
-  *
-  * Device 层通过此表调用 I2C 传输，不再反向 include Board 层头文件。
-  * Board 层在 *_board.c 中实现这些函数，通过 icm42688_cfg_t.i2c 注入。
-  */
-typedef struct {
-    int32_t (*write_reg)(uint8_t reg_addr, uint8_t reg_data);
-    int32_t (*read_reg)(uint8_t reg_addr, uint8_t *reg_data);
-    int32_t (*write_regs)(uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
-    int32_t (*read_regs)(uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
-    void    (*init)(void);
-    int32_t (*check_device)(void);
-    uint8_t (*get_device_addr)(void);
-} icm42688_i2c_ops_t;
-
 extern volatile uint8_t  g_icm_debug_last_who_am_i;
 extern volatile int32_t  g_icm_debug_init_result;
 extern volatile uint8_t  g_icm_debug_last_read_status;
@@ -208,7 +193,7 @@ extern volatile int32_t  g_icm_debug_last_io_result;
 
 typedef struct {
     icm42688_init_config_t init_config;
-    const icm42688_i2c_ops_t *i2c;
+    device_iic_t iic;
 } icm42688_cfg_t;
 
 struct icm42688_s {

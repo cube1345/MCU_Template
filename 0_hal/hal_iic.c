@@ -1,17 +1,40 @@
+/**
+ * @file    hal_iic.c
+ * @brief   Board-independent IIC transfer HAL.
+ * @details Wraps TI DriverLib IIC operations. Hardware instances, clocks,
+ *          pin muxing, bus speed, and IRQ entry points are supplied by Board.
+ * @author  cube
+ * @date    2026-08-03
+ * @note    Updated: 2026-08-03
+ */
+
 #include "hal_iic.h"
 
 #include "FreeRTOS.h"
-#include "my_system_lib.h"
 #include "task.h"
-#include "ti_msp_dl_config.h"
 
-static hal_iic_profile_t g_hal_iic0_profile;
-#if defined(I2C_1_INST)
-#define HAL_IIC_HAS_PORT1                    (1U)
-static hal_iic_profile_t g_hal_iic1_profile;
-#else
-#define HAL_IIC_HAS_PORT1                    (0U)
+/*
+ * HAL 内部只保存由调用方注册的实例，不依赖任何 SysConfig 宏。
+ * 槽位是纯软件资源，不代表任何具体硬件编号；实例与槽位的映射由
+ * hal_iic_init() 建立。槽位数量只决定 HAL 可同时管理的实例数，不携带
+ * 芯片或板级信息；需要更多实例时可在编译配置中覆盖该默认值。
+ */
+#ifndef HAL_IIC_MAX_INSTANCES
+#define HAL_IIC_MAX_INSTANCES            (4U)
 #endif
+
+#if (HAL_IIC_MAX_INSTANCES == 0U)
+#error "HAL_IIC_MAX_INSTANCES must be greater than zero"
+#endif
+
+typedef uint32_t hal_iic_slot_t;
+
+#define HAL_IIC_SLOT_INVALID             (HAL_IIC_MAX_INSTANCES)
+
+static I2C_Regs *g_hal_iic_instances[HAL_IIC_MAX_INSTANCES];
+static uint32_t g_hal_iic_bus_speed_hz[HAL_IIC_MAX_INSTANCES];
+static hal_iic_time_us_fn_t g_hal_iic_time_sources[HAL_IIC_MAX_INSTANCES];
+static hal_iic_profile_t g_hal_iic_profiles[HAL_IIC_MAX_INSTANCES];
 
 /* IIC 轮询或中断等待的统一超时计数，用于限制异常情况下的最长阻塞时间。 */
 #define HAL_IIC_TIMEOUT_COUNT                (200000U)
@@ -40,7 +63,7 @@ static hal_iic_profile_t g_hal_iic1_profile;
 
 
 /**
-  * @brief  BSP IIC 中断事务阶段定义，用于描述一次收发流程当前推进到哪一步。
+  * @brief  IIC 中断事务阶段定义，用于描述一次收发流程当前推进到哪一步。
   */
 typedef enum
 {
@@ -52,7 +75,7 @@ typedef enum
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
 
 /**
-  * @brief  单个 IIC 端口的中断事务上下文，用于保存一次阻塞式中断收发所需的状态。
+  * @brief  单个 IIC 实例的中断事务上下文，用于保存一次阻塞式中断收发所需的状态。
   */
 typedef struct
 {
@@ -71,107 +94,93 @@ typedef struct
     volatile uint16_t rx_index;
 } hal_iic_irq_context_t;
 
-/* IIC0 的中断事务上下文，用于保存当前一次基于中断的 IIC0 访问状态。 */
-static hal_iic_irq_context_t g_hal_iic0_irq_context;
-
-/* IIC1 的中断事务上下文，用于保存当前一次基于中断的 IIC1 访问状态。 */
-#if (HAL_IIC_HAS_PORT1 == 1U)
-static hal_iic_irq_context_t g_hal_iic1_irq_context;
-#endif
+/* 每个已注册实例各自拥有一个中断事务上下文。 */
+static hal_iic_irq_context_t g_hal_iic_irq_contexts[HAL_IIC_MAX_INSTANCES];
 
 #endif
 
-/**
-  * @brief  根据逻辑端口编号获取对应的硬件 IIC 实例。
-  * @param  iic_port：目标 IIC 端口编号。
-  * @retval 返回对应的硬件 IIC 实例指针；若端口非法，则返回空指针。
-  */
-static I2C_Regs *hal_iic_get_instance(hal_iic_port_t iic_port)
+static hal_iic_slot_t hal_iic_get_slot_by_instance(I2C_Regs *iic_instance)
 {
-    I2C_Regs *iic_instance = (I2C_Regs *) 0;
+    uint32_t index;
 
-    switch (iic_port) {
-        case HAL_IIC_PORT_0:
-            iic_instance = I2C_0_INST;
-            break;
-
-        case HAL_IIC_PORT_1:
-#if (HAL_IIC_HAS_PORT1 == 1U)
-            iic_instance = I2C_1_INST;
-#else
-            iic_instance = (I2C_Regs *) 0;
-#endif
-            break;
-
-        default:
-            iic_instance = (I2C_Regs *) 0;
-            break;
+    if (iic_instance == (I2C_Regs *)0) {
+        return HAL_IIC_SLOT_INVALID;
     }
 
-    return iic_instance;
+    for (index = 0U; index < HAL_IIC_MAX_INSTANCES; index++) {
+        if (g_hal_iic_instances[index] == iic_instance) {
+            return index;
+        }
+    }
+
+    return HAL_IIC_SLOT_INVALID;
+}
+
+static hal_iic_slot_t hal_iic_register_instance(I2C_Regs *iic_instance)
+{
+    hal_iic_slot_t slot;
+
+    if (iic_instance == (I2C_Regs *)0) {
+        return HAL_IIC_SLOT_INVALID;
+    }
+
+    slot = hal_iic_get_slot_by_instance(iic_instance);
+    if (slot < HAL_IIC_MAX_INSTANCES) {
+        return slot;
+    }
+
+    for (slot = 0U; slot < HAL_IIC_MAX_INSTANCES; slot++) {
+        if (g_hal_iic_instances[slot] == (I2C_Regs *)0) {
+            g_hal_iic_instances[slot] = iic_instance;
+            return slot;
+        }
+    }
+
+    return HAL_IIC_SLOT_INVALID;
 }
 
 /**
-  * @brief  获取指定端口对应的总线速率，用于给上层提供调试和确认信息。
-  * @param  iic_port：目标 IIC 端口编号。
-  * @retval 返回总线速率，单位为 Hz；若端口非法，则返回 0。
+  * @brief  获取指定实例对应的总线速率，用于给上层提供调试和确认信息。
+  * @param  slot：HAL 内部实例槽位。
+  * @retval 返回总线速率，单位为 Hz；若槽位非法，则返回 0。
   */
-static uint32_t hal_iic_get_instance_speed_hz(hal_iic_port_t iic_port)
+static uint32_t hal_iic_get_instance_speed_hz(hal_iic_slot_t slot)
 {
-    uint32_t bus_speed_hz = 0U;
-
-    switch (iic_port) {
-        case HAL_IIC_PORT_0:
-            bus_speed_hz = I2C_0_BUS_SPEED_HZ;
-            break;
-
-        case HAL_IIC_PORT_1:
-#if (HAL_IIC_HAS_PORT1 == 1U)
-            bus_speed_hz = I2C_1_BUS_SPEED_HZ;
-#else
-            bus_speed_hz = 0U;
-#endif
-            break;
-
-        default:
-            bus_speed_hz = 0U;
-            break;
+    if (slot < HAL_IIC_MAX_INSTANCES) {
+        return g_hal_iic_bus_speed_hz[slot];
     }
-
-    return bus_speed_hz;
+    return 0U;
 }
 
-static hal_iic_profile_t *hal_iic_get_profile_slot(hal_iic_port_t iic_port)
+static hal_iic_profile_t *hal_iic_get_profile_slot(hal_iic_slot_t slot)
 {
-    switch (iic_port) {
-        case HAL_IIC_PORT_0:
-            return &g_hal_iic0_profile;
-
-        case HAL_IIC_PORT_1:
-#if (HAL_IIC_HAS_PORT1 == 1U)
-            return &g_hal_iic1_profile;
-#else
-            return (hal_iic_profile_t *) 0;
-#endif
-
-        default:
-            return (hal_iic_profile_t *) 0;
+    if (slot < HAL_IIC_MAX_INSTANCES) {
+        return &g_hal_iic_profiles[slot];
     }
+    return (hal_iic_profile_t *) 0;
 }
 
 static hal_iic_profile_t *hal_iic_get_profile_slot_by_instance(I2C_Regs *iic_instance)
 {
-    if (iic_instance == I2C_0_INST) {
-        return &g_hal_iic0_profile;
-    }
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
 
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    if (iic_instance == I2C_1_INST) {
-        return &g_hal_iic1_profile;
+    if (slot < HAL_IIC_MAX_INSTANCES) {
+        return hal_iic_get_profile_slot(slot);
     }
-#endif
 
     return (hal_iic_profile_t *) 0;
+}
+
+static uint64_t hal_iic_get_time_us(I2C_Regs *iic_instance)
+{
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+
+    if ((slot < HAL_IIC_MAX_INSTANCES) &&
+        (g_hal_iic_time_sources[slot] != (hal_iic_time_us_fn_t)0)) {
+        return g_hal_iic_time_sources[slot]();
+    }
+
+    return 0U;
 }
 
 static void hal_iic_disable_irq_transaction_interrupts(I2C_Regs *iic_instance)
@@ -209,7 +218,7 @@ static void hal_iic_clear_controller_state(I2C_Regs *iic_instance)
 /**
   * @brief  解析当前 IIC 控制器错误来源，并转换为统一的 BSP 错误码。
   * @param  iic_instance：目标硬件 IIC 实例指针。
-  * @retval 返回统一的 BSP IIC 状态码。
+  * @retval 返回统一的 HAL IIC 状态码。
   */
 static hal_iic_status_t hal_iic_get_error_status(I2C_Regs *iic_instance)
 {
@@ -626,7 +635,7 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
     uint64_t total_start_us;
     uint64_t stage_start_us;
 
-    total_start_us = My_GetTimeUs();
+    total_start_us = hal_iic_get_time_us(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
         profile->transfer_length = read_length;
         profile->wait_bus_us = 0U;
@@ -641,43 +650,43 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
         profile->result_code = HAL_IIC_STATUS_OK;
     }
 
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     status = hal_iic_wait_bus_release(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->wait_bus_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->wait_bus_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
     if (status != HAL_IIC_STATUS_OK) {
         if (profile != (hal_iic_profile_t *) 0) {
             profile->result_code = (uint32_t) status;
-            profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+            profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
         }
         return status;
     }
 
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     status = hal_iic_wait_controller_idle(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->wait_idle_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->wait_idle_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
     if (status != HAL_IIC_STATUS_OK) {
         if (profile != (hal_iic_profile_t *) 0) {
             profile->result_code = (uint32_t) status;
-            profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+            profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
         }
         return status;
     }
 
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     hal_iic_clear_controller_state(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->clear_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->clear_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
 
     /*
      * 第一步只发送寄存器地址且不发 STOP，这样第二步读取时会形成标准的重复起始条件。
      * 这是绝大多数寄存器型 IIC 器件读取寄存器的通用时序。
      */
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     DL_I2C_transmitControllerData(iic_instance, reg_addr);
     DL_I2C_startControllerTransferAdvanced(iic_instance, device_addr,
         DL_I2C_CONTROLLER_DIRECTION_TX, 1U, DL_I2C_CONTROLLER_START_ENABLE,
@@ -685,12 +694,12 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
 
     status = hal_iic_wait_tx_fifo_empty(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->poll_tx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->poll_tx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
     if (status != HAL_IIC_STATUS_OK) {
         if (profile != (hal_iic_profile_t *) 0) {
             profile->result_code = (uint32_t) status;
-            profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+            profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
         }
         return status;
     }
@@ -698,14 +707,14 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
     DL_I2C_startControllerTransfer(iic_instance, device_addr,
         DL_I2C_CONTROLLER_DIRECTION_RX, read_length);
 
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     while (read_index < read_length) {
         status = hal_iic_wait_rx_fifo_ready(iic_instance);
         if (status != HAL_IIC_STATUS_OK) {
             if (profile != (hal_iic_profile_t *) 0) {
-                profile->poll_rx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+                profile->poll_rx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
                 profile->result_code = (uint32_t) status;
-                profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+                profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
             }
             return status;
         }
@@ -714,25 +723,25 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
         read_index++;
     }
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->poll_rx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->poll_rx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
 
-    stage_start_us = My_GetTimeUs();
+    stage_start_us = hal_iic_get_time_us(iic_instance);
     status = hal_iic_wait_bus_release(iic_instance);
     if (status != HAL_IIC_STATUS_OK) {
         if (profile != (hal_iic_profile_t *) 0) {
-            profile->poll_tail_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+            profile->poll_tail_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
             profile->result_code = (uint32_t) status;
-            profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+            profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
         }
         return status;
     }
 
     status = hal_iic_wait_controller_idle(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->poll_tail_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->poll_tail_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
         profile->result_code = (uint32_t) status;
-        profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+        profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
     }
 
     return status;
@@ -741,33 +750,19 @@ static hal_iic_status_t hal_iic_poll_read_reg_packet(I2C_Regs *iic_instance, uin
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
 
 /**
-  * @brief  根据 IIC 端口编号获取对应的中断事务上下文。
-  * @param  iic_port：目标 IIC 端口编号。
-  * @retval 返回对应端口的中断事务上下文指针；若端口非法，则返回空指针。
+  * @brief  根据已注册的硬件实例获取中断事务上下文。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
+  * @retval 返回对应实例的中断事务上下文指针；若实例未注册，则返回空指针。
   */
-static hal_iic_irq_context_t *hal_iic_get_irq_context(hal_iic_port_t iic_port)
+static hal_iic_irq_context_t *hal_iic_get_irq_context(I2C_Regs *iic_instance)
 {
-    hal_iic_irq_context_t *irq_context = (hal_iic_irq_context_t *) 0;
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
 
-    switch (iic_port) {
-        case HAL_IIC_PORT_0:
-            irq_context = &g_hal_iic0_irq_context;
-            break;
-
-        case HAL_IIC_PORT_1:
-#if (HAL_IIC_HAS_PORT1 == 1U)
-            irq_context = &g_hal_iic1_irq_context;
-#else
-            irq_context = (hal_iic_irq_context_t *) 0;
-#endif
-            break;
-
-        default:
-            irq_context = (hal_iic_irq_context_t *) 0;
-            break;
+    if (slot < HAL_IIC_MAX_INSTANCES) {
+        return &g_hal_iic_irq_contexts[slot];
     }
 
-    return irq_context;
+    return (hal_iic_irq_context_t *) 0;
 }
 
 /**
@@ -777,31 +772,19 @@ static hal_iic_irq_context_t *hal_iic_get_irq_context(hal_iic_port_t iic_port)
   */
 static hal_iic_irq_context_t *hal_iic_get_irq_context_by_instance(I2C_Regs *iic_instance)
 {
-    if (iic_instance == I2C_0_INST) {
-        return &g_hal_iic0_irq_context;
-    }
-
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    if (iic_instance == I2C_1_INST) {
-        return &g_hal_iic1_irq_context;
-    }
-#endif
-
-    return (hal_iic_irq_context_t *) 0;
+    return hal_iic_get_irq_context(iic_instance);
 }
 
 static I2C_Regs *hal_iic_get_instance_by_irq_context(
     const hal_iic_irq_context_t *irq_context)
 {
-    if (irq_context == &g_hal_iic0_irq_context) {
-        return I2C_0_INST;
-    }
+    uint32_t index;
 
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    if (irq_context == &g_hal_iic1_irq_context) {
-        return I2C_1_INST;
+    for (index = 0U; index < HAL_IIC_MAX_INSTANCES; index++) {
+        if (irq_context == &g_hal_iic_irq_contexts[index]) {
+            return g_hal_iic_instances[index];
+        }
     }
-#endif
 
     return (I2C_Regs *) 0;
 }
@@ -842,19 +825,8 @@ static void hal_iic_finish_irq_transfer(
     uint32_t finish_tick = 0U;
     I2C_Regs *iic_instance;
 
-    if (irq_context == &g_hal_iic0_irq_context) {
-        profile = &g_hal_iic0_profile;
-    }
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    else if (irq_context == &g_hal_iic1_irq_context) {
-        profile = &g_hal_iic1_profile;
-    }
-#endif
-    else {
-        profile = (hal_iic_profile_t *) 0;
-    }
-
     iic_instance = hal_iic_get_instance_by_irq_context(irq_context);
+    profile = hal_iic_get_profile_slot_by_instance(iic_instance);
 
     if (__get_IPSR() == 0U) {
         finish_tick = (uint32_t) xTaskGetTickCount();
@@ -1089,7 +1061,7 @@ static void hal_iic_start_irq_stage(I2C_Regs *iic_instance, hal_iic_irq_context_
   * @brief  准备一次中断事务的公共前置流程，确保总线和上下文都进入可用状态。
   * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  irq_context：目标中断事务上下文指针。
-  * @retval 返回准备结果；若端口正忙、总线异常或超时，则返回对应错误码。
+  * @retval 返回准备结果；若实例正忙、总线异常或超时，则返回对应错误码。
   */
 static hal_iic_status_t hal_iic_prepare_irq_transfer(
     I2C_Regs *iic_instance, hal_iic_irq_context_t *irq_context)
@@ -1140,17 +1112,16 @@ static hal_iic_status_t hal_iic_prepare_irq_transfer(
 
 /**
   * @brief  以中断方式发送一组连续字节，对外仍保持阻塞式返回风格。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  write_data：待发送数据缓冲区首地址。
   * @param  write_length：待发送数据长度，单位为字节。
   * @retval 返回事务执行结果。
   */
-static hal_iic_status_t hal_iic_irq_write_packet(hal_iic_port_t iic_port, uint8_t device_addr,
+static hal_iic_status_t hal_iic_irq_write_packet(I2C_Regs *iic_instance, uint8_t device_addr,
     const uint8_t *write_data, uint16_t write_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
-    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context(iic_port);
+    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context(iic_instance);
     hal_iic_status_t status;
 
     status = hal_iic_prepare_irq_transfer(iic_instance, irq_context);
@@ -1171,17 +1142,16 @@ static hal_iic_status_t hal_iic_irq_write_packet(hal_iic_port_t iic_port, uint8_
 
 /**
   * @brief  以中断方式读取一组连续字节，对外仍保持阻塞式返回风格。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  read_data：接收数据缓冲区首地址。
   * @param  read_length：待读取数据长度，单位为字节。
   * @retval 返回事务执行结果。
   */
-static hal_iic_status_t hal_iic_irq_read_packet(hal_iic_port_t iic_port, uint8_t device_addr,
+static hal_iic_status_t hal_iic_irq_read_packet(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t *read_data, uint16_t read_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
-    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context(iic_port);
+    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context(iic_instance);
     hal_iic_status_t status;
 
     status = hal_iic_prepare_irq_transfer(iic_instance, irq_context);
@@ -1202,40 +1172,38 @@ static hal_iic_status_t hal_iic_irq_read_packet(hal_iic_port_t iic_port, uint8_t
 
 /**
   * @brief  以中断方式向寄存器写入连续数据，对外仍保持阻塞式返回风格。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：起始 8 位寄存器地址。
   * @param  write_data：待写入数据缓冲区首地址。
   * @param  write_length：待写入数据长度，单位为字节。
   * @retval 返回事务执行结果。
   */
-static hal_iic_status_t hal_iic_irq_write_reg_packet(hal_iic_port_t iic_port, uint8_t device_addr,
+static hal_iic_status_t hal_iic_irq_write_reg_packet(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
-
     return hal_iic_poll_write_reg_packet(
         iic_instance, device_addr, reg_addr, write_data, write_length);
 }
 
 /**
   * @brief  以中断方式读取连续寄存器数据，对外仍保持阻塞式返回风格。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：起始 8 位寄存器地址。
   * @param  read_data：接收数据缓冲区首地址。
   * @param  read_length：待读取数据长度，单位为字节。
   * @retval 返回事务执行结果。
   */
-static hal_iic_status_t hal_iic_irq_read_reg_packet(hal_iic_port_t iic_port, uint8_t device_addr,
+static hal_iic_status_t hal_iic_irq_read_reg_packet(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, uint8_t *read_data, uint16_t read_length)
 {
-    hal_iic_profile_t *profile = hal_iic_get_profile_slot(iic_port);
+    hal_iic_profile_t *profile = hal_iic_get_profile_slot_by_instance(iic_instance);
     hal_iic_status_t status;
     uint64_t total_start_us;
     uint64_t stage_start_us;
 
-    total_start_us = My_GetTimeUs();
+    total_start_us = hal_iic_get_time_us(iic_instance);
     if (profile != (hal_iic_profile_t *) 0) {
         profile->transfer_length = read_length;
         profile->last_stage = 0U;
@@ -1260,17 +1228,17 @@ static hal_iic_status_t hal_iic_irq_read_reg_packet(hal_iic_port_t iic_port, uin
         profile->total_us = 0U;
     }
 
-    stage_start_us = My_GetTimeUs();
-    status = hal_iic_irq_write_packet(iic_port, device_addr, &reg_addr, 1U);
+    stage_start_us = hal_iic_get_time_us(iic_instance);
+    status = hal_iic_irq_write_packet(iic_instance, device_addr, &reg_addr, 1U);
     if (profile != (hal_iic_profile_t *) 0) {
-        profile->poll_tx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+        profile->poll_tx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
     }
 
     if (status == HAL_IIC_STATUS_OK) {
-        stage_start_us = My_GetTimeUs();
-        status = hal_iic_irq_read_packet(iic_port, device_addr, read_data, read_length);
+        stage_start_us = hal_iic_get_time_us(iic_instance);
+        status = hal_iic_irq_read_packet(iic_instance, device_addr, read_data, read_length);
         if (profile != (hal_iic_profile_t *) 0) {
-            profile->poll_rx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+            profile->poll_rx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
         }
     }
 
@@ -1278,7 +1246,7 @@ static hal_iic_status_t hal_iic_irq_read_reg_packet(hal_iic_port_t iic_port, uin
         profile->poll_tail_us = 0U;
         profile->wait_us = profile->poll_tx_us + profile->poll_rx_us;
         profile->result_code = (uint32_t) status;
-        profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+        profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
     }
 
     return status;
@@ -1405,115 +1373,87 @@ static void hal_iic_irq_handler_common(I2C_Regs *iic_instance)
     }
 }
 
-/**
-  * @brief  I2C0 中断服务函数，用于驱动 I2C0 的中断收发状态机。
-  * @param  None
-  * @retval None
-  */
-void I2C0_IRQHandler(void)
-{
-    hal_iic_irq_handler_common(I2C_0_INST);
-}
-
-/**
-  * @brief  I2C1 中断服务函数，用于驱动 I2C1 的中断收发状态机。
-  * @param  None
-  * @retval None
-  */
-#if (HAL_IIC_HAS_PORT1 == 1U)
-void I2C1_IRQHandler(void)
-{
-    hal_iic_irq_handler_common(I2C_1_INST);
-}
-#endif
-
 #endif
 
 /**
-  * @brief  初始化 BSP IIC 软件封装层。
-  * @param  None
-  * @retval None
+  * @brief  由 Board 层转发 IIC 中断到通用 HAL 状态机。
+  * @param  iic_instance：触发中断的硬件 IIC 实例。
   */
-/* ==================== BSP IIC 对外接口实现 ==================== */
-
-void hal_iic_init(void)
+void hal_iic_irq_handler(I2C_Regs *iic_instance)
 {
+#if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
+    if (hal_iic_get_slot_by_instance(iic_instance) < HAL_IIC_MAX_INSTANCES) {
+        hal_iic_irq_handler_common(iic_instance);
+    }
+#else
+    (void) iic_instance;
+#endif
+}
+
+/**
+  * @brief  注册并初始化一个通用 IIC 控制器实例。
+  * @param  iic_instance：由 Board 层提供的控制器寄存器基址。
+  * @param  bus_speed_hz：该控制器总线速率，单位为 Hz。
+  * @retval HAL_IIC_STATUS_OK 表示初始化成功。
+  */
+hal_iic_status_t hal_iic_init(I2C_Regs *iic_instance, uint32_t bus_speed_hz,
+    hal_iic_time_us_fn_t time_us_fn)
+{
+    hal_iic_slot_t slot;
+
+    if ((iic_instance == (I2C_Regs *)0) || (bus_speed_hz == 0U)) {
+        return HAL_IIC_STATUS_ERROR_PARAM;
+    }
+
+    slot = hal_iic_register_instance(iic_instance);
+    if (slot >= HAL_IIC_MAX_INSTANCES) {
+        return HAL_IIC_STATUS_ERROR_PARAM;
+    }
+
+    g_hal_iic_bus_speed_hz[slot] = bus_speed_hz;
+    g_hal_iic_time_sources[slot] = time_us_fn;
+
     /*
-     * 硬件外设的真正初始化已由 SysConfig 生成代码完成。
-     * 这里负责统一清空控制器残留状态，并按当前编译模式配置 IIC 中断行为。
+     * SysConfig 或 Board 负责引脚复用与时钟初始化；HAL 只清理传输状态，
+     * 不访问任何生成的实例宏或 IRQ 号。
      */
-    hal_iic_clear_controller_state(I2C_0_INST);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    hal_iic_clear_controller_state(I2C_1_INST);
-#endif
+    hal_iic_clear_controller_state(iic_instance);
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    hal_iic_reset_irq_context(&g_hal_iic0_irq_context);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    hal_iic_reset_irq_context(&g_hal_iic1_irq_context);
-#endif
-
-    /*
-     * I2C IRQ 中会调用 FreeRTOS 的 FromISR API，因此其中断优先级必须满足
-      * FreeRTOS 的最大系统调用中断优先级约束。若保持默认更高优先级，
-      * 可能出现 IRQ 能进来但任务通知无法可靠唤醒等待任务的现象。
-      */
-    NVIC_SetPriority(I2C_0_INST_INT_IRQN, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    NVIC_SetPriority(I2C_1_INST_INT_IRQN, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-#endif
-
-    hal_iic_disable_irq_transaction_interrupts(I2C_0_INST);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    hal_iic_disable_irq_transaction_interrupts(I2C_1_INST);
-#endif
-
-    NVIC_ClearPendingIRQ(I2C_0_INST_INT_IRQN);
-    NVIC_EnableIRQ(I2C_0_INST_INT_IRQN);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    NVIC_ClearPendingIRQ(I2C_1_INST_INT_IRQN);
-    NVIC_EnableIRQ(I2C_1_INST_INT_IRQN);
-#endif
+    hal_iic_reset_irq_context(&g_hal_iic_irq_contexts[slot]);
+    hal_iic_disable_irq_transaction_interrupts(iic_instance);
 #else
-    /*
-     * 轮询模式下主动关闭 NVIC 和 IIC 控制器中断，避免中断标志被异步清除后影响轮询判断。
-     * 这样可以确保同一套寄存器访问流程完全由轮询逻辑接管。
-     */
-    NVIC_DisableIRQ(I2C_0_INST_INT_IRQN);
-    DL_I2C_disableInterrupt(I2C_0_INST, HAL_IIC_CONTROLLER_IRQ_MASK);
-#if (HAL_IIC_HAS_PORT1 == 1U)
-    NVIC_DisableIRQ(I2C_1_INST_INT_IRQN);
-    DL_I2C_disableInterrupt(I2C_1_INST, HAL_IIC_CONTROLLER_IRQ_MASK);
+    DL_I2C_disableInterrupt(iic_instance, HAL_IIC_CONTROLLER_IRQ_MASK);
 #endif
-#endif
+
+    return HAL_IIC_STATUS_OK;
+}
+
+uint32_t hal_iic_get_bus_speed_hz(I2C_Regs *iic_instance)
+{
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+
+    if (slot >= HAL_IIC_MAX_INSTANCES) {
+        return 0U;
+    }
+    return hal_iic_get_instance_speed_hz(slot);
+}
+
+const hal_iic_profile_t *hal_iic_get_profile(I2C_Regs *iic_instance)
+{
+    return hal_iic_get_profile_slot_by_instance(iic_instance);
 }
 
 /**
-  * @brief  获取指定 IIC 端口的总线速率。
-  * @param  iic_port：目标 IIC 端口编号。
-  * @retval 返回总线速率，单位为 Hz；若端口非法，则返回 0。
-  */
-uint32_t hal_iic_get_bus_speed_hz(hal_iic_port_t iic_port)
-{
-    return hal_iic_get_instance_speed_hz(iic_port);
-}
-
-const hal_iic_profile_t *hal_iic_get_profile(hal_iic_port_t iic_port)
-{
-    return hal_iic_get_profile_slot(iic_port);
-}
-
-/**
-  * @brief  判断指定 IIC 端口上的器件是否应答。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @brief  判断指定 IIC 控制器上的器件是否应答。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @retval 返回 IIC 操作状态，返回 HAL_IIC_STATUS_OK 表示器件存在且应答正常。
   */
-hal_iic_status_t hal_iic_check_device(hal_iic_port_t iic_port, uint8_t device_addr)
+hal_iic_status_t hal_iic_check_device(I2C_Regs *iic_instance, uint8_t device_addr)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
-
-    if (iic_instance == (I2C_Regs *) 0) {
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (hal_iic_get_slot_by_instance(iic_instance) >= HAL_IIC_MAX_INSTANCES)) {
         return HAL_IIC_STATUS_ERROR_PARAM;
     }
 
@@ -1522,24 +1462,26 @@ hal_iic_status_t hal_iic_check_device(hal_iic_port_t iic_port, uint8_t device_ad
 
 /**
   * @brief  向指定器件连续写入原始数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  write_data：待发送数据缓冲区首地址。
   * @param  write_length：待发送数据长度，单位为字节。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_write_bytes(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_write_bytes(I2C_Regs *iic_instance, uint8_t device_addr,
     const uint8_t *write_data, uint16_t write_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
 
-    if ((iic_instance == (I2C_Regs *) 0) || (write_data == (const uint8_t *) 0) ||
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (slot >= HAL_IIC_MAX_INSTANCES) ||
+        (write_data == (const uint8_t *) 0) ||
         (write_length == 0U)) {
         return HAL_IIC_STATUS_ERROR_PARAM;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    return hal_iic_irq_write_packet(iic_port, device_addr, write_data, write_length);
+    return hal_iic_irq_write_packet(iic_instance, device_addr, write_data, write_length);
 #else
     return hal_iic_poll_write_packet(iic_instance, device_addr, write_data, write_length);
 #endif
@@ -1547,24 +1489,26 @@ hal_iic_status_t hal_iic_write_bytes(hal_iic_port_t iic_port, uint8_t device_add
 
 /**
   * @brief  从指定器件连续读取原始数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  read_data：接收数据缓冲区首地址。
   * @param  read_length：待读取数据长度，单位为字节。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_read_bytes(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_read_bytes(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t *read_data, uint16_t read_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
 
-    if ((iic_instance == (I2C_Regs *) 0) || (read_data == (uint8_t *) 0) ||
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (slot >= HAL_IIC_MAX_INSTANCES) ||
+        (read_data == (uint8_t *) 0) ||
         (read_length == 0U)) {
         return HAL_IIC_STATUS_ERROR_PARAM;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    return hal_iic_irq_read_packet(iic_port, device_addr, read_data, read_length);
+    return hal_iic_irq_read_packet(iic_instance, device_addr, read_data, read_length);
 #else
     return hal_iic_poll_read_packet(iic_instance, device_addr, read_data, read_length);
 #endif
@@ -1572,53 +1516,55 @@ hal_iic_status_t hal_iic_read_bytes(hal_iic_port_t iic_port, uint8_t device_addr
 
 /**
   * @brief  向指定器件的 8 位寄存器写入 1 个字节数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：8 位寄存器地址。
   * @param  reg_data：待写入的寄存器数据。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_write_reg8(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_write_reg8(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, uint8_t reg_data)
 {
-    return hal_iic_write_reg8s(iic_port, device_addr, reg_addr, &reg_data, 1U);
+    return hal_iic_write_reg8s(iic_instance, device_addr, reg_addr, &reg_data, 1U);
 }
 
 /**
   * @brief  从指定器件的 8 位寄存器读取 1 个字节数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：8 位寄存器地址。
   * @param  reg_data：寄存器数据输出指针。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_read_reg8(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_read_reg8(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, uint8_t *reg_data)
 {
-    return hal_iic_read_reg8s(iic_port, device_addr, reg_addr, reg_data, 1U);
+    return hal_iic_read_reg8s(iic_instance, device_addr, reg_addr, reg_data, 1U);
 }
 
 /**
   * @brief  向指定器件的连续 8 位寄存器写入多个字节数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：起始 8 位寄存器地址。
   * @param  write_data：待写入数据缓冲区首地址。
   * @param  write_length：待写入数据长度，单位为字节。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_write_reg8s(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_write_reg8s(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
 
-    if ((iic_instance == (I2C_Regs *) 0) || (write_data == (const uint8_t *) 0) ||
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (slot >= HAL_IIC_MAX_INSTANCES) ||
+        (write_data == (const uint8_t *) 0) ||
         (write_length == 0U)) {
         return HAL_IIC_STATUS_ERROR_PARAM;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    return hal_iic_irq_write_reg_packet(iic_port, device_addr, reg_addr, write_data, write_length);
+    return hal_iic_irq_write_reg_packet(iic_instance, device_addr, reg_addr, write_data, write_length);
 #else
     return hal_iic_poll_write_reg_packet(
         iic_instance, device_addr, reg_addr, write_data, write_length);
@@ -1627,20 +1573,22 @@ hal_iic_status_t hal_iic_write_reg8s(hal_iic_port_t iic_port, uint8_t device_add
 
 /**
   * @brief  从指定器件的连续 8 位寄存器读取多个字节数据。
-  * @param  iic_port：目标 IIC 端口编号。
+  * @param  iic_instance：目标硬件 IIC 实例。
   * @param  device_addr：7 位器件地址，不需要左移。
   * @param  reg_addr：起始 8 位寄存器地址。
   * @param  read_data：接收数据缓冲区首地址。
   * @param  read_length：待读取数据长度，单位为字节。
   * @retval 返回 IIC 操作状态。
   */
-hal_iic_status_t hal_iic_read_reg8s(hal_iic_port_t iic_port, uint8_t device_addr,
+hal_iic_status_t hal_iic_read_reg8s(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, uint8_t *read_data, uint16_t read_length)
 {
-    I2C_Regs *iic_instance = hal_iic_get_instance(iic_port);
+    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
     hal_iic_status_t status;
 
-    if ((iic_instance == (I2C_Regs *) 0) || (read_data == (uint8_t *) 0) ||
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (slot >= HAL_IIC_MAX_INSTANCES) ||
+        (read_data == (uint8_t *) 0) ||
         (read_length == 0U)) {
         return HAL_IIC_STATUS_ERROR_PARAM;
     }
@@ -1648,8 +1596,8 @@ hal_iic_status_t hal_iic_read_reg8s(hal_iic_port_t iic_port, uint8_t device_addr
 
 #if (HAL_IIC_FORCE_POLL_REG_READ == 1U)
     {
-        hal_iic_profile_t *profile = hal_iic_get_profile_slot(iic_port);
-        uint64_t total_start_us = My_GetTimeUs();
+        hal_iic_profile_t *profile = hal_iic_get_profile_slot(slot);
+        uint64_t total_start_us = hal_iic_get_time_us(iic_instance);
         uint64_t stage_start_us;
 
         if (profile != (hal_iic_profile_t *) 0) {
@@ -1661,27 +1609,27 @@ hal_iic_status_t hal_iic_read_reg8s(hal_iic_port_t iic_port, uint8_t device_addr
             profile->result_code = HAL_IIC_STATUS_OK;
         }
 
-        stage_start_us = My_GetTimeUs();
+        stage_start_us = hal_iic_get_time_us(iic_instance);
         status = hal_iic_poll_write_packet(iic_instance, device_addr, &reg_addr, 1U);
         if (profile != (hal_iic_profile_t *) 0) {
-            profile->poll_tx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+            profile->poll_tx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
         }
 
         if (status == HAL_IIC_STATUS_OK) {
-            stage_start_us = My_GetTimeUs();
+            stage_start_us = hal_iic_get_time_us(iic_instance);
             status = hal_iic_poll_read_packet(iic_instance, device_addr, read_data, read_length);
             if (profile != (hal_iic_profile_t *) 0) {
-                profile->poll_rx_us = (uint32_t) (My_GetTimeUs() - stage_start_us);
+                profile->poll_rx_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - stage_start_us);
             }
         }
 
         if (profile != (hal_iic_profile_t *) 0) {
             profile->result_code = (uint32_t) status;
-            profile->total_us = (uint32_t) (My_GetTimeUs() - total_start_us);
+            profile->total_us = (uint32_t) (hal_iic_get_time_us(iic_instance) - total_start_us);
         }
     }
 #elif (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    status = hal_iic_irq_read_reg_packet(iic_port, device_addr, reg_addr, read_data, read_length);
+    status = hal_iic_irq_read_reg_packet(iic_instance, device_addr, reg_addr, read_data, read_length);
 #else
     status = hal_iic_poll_read_reg_packet(
         iic_instance, device_addr, reg_addr, read_data, read_length);

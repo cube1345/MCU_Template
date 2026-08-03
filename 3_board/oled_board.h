@@ -10,9 +10,9 @@
 
 #include "../2_device/OLED_driver.h"
 
-/** @brief 初始化 OLED I2C 通信层，注入 SCL/SDA 回调 */
+/** @brief 绑定 OLED 软件 IIC 适配器到 Device 层默认实例。 */
 void OLED_Driver_Init(void);
-/** @brief OLED 板级初始化：配置回调并初始化显示控制器 */
+/** @brief OLED 板级初始化：绑定 IIC 传输并初始化显示控制器。 */
 void OLED_Board_Init(void);
 
 #endif

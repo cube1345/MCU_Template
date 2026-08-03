@@ -187,8 +187,9 @@ Core 层不依赖具体硬件，不依赖 SysConfig，不依赖某个具体外�
 
 HAL（硬件抽象层，Hardware Abstraction Layer）统一承担：
 
-- 直接对接 MCU DriverLib、寄存器或 SysConfig 生成宏（GPIO 读写、I2C 收发）；
-- 对上层 Device/Board 提供统一接口，屏蔽厂商相关细节（如 `HAL_GPIO_WritePin(GPIO_Regs*, pin, value)` 包装 `DL_GPIO_setPins/clearPins`）。
+- 直接对接 MCU DriverLib 和寄存器结构体，但不绑定某个板子的 SysConfig 实例宏；
+- 对上层 Device/Board 提供统一接口，屏蔽厂商相关细节（如 `HAL_GPIO_WritePin(GPIO_Regs*, pin, value)` 包装 `DL_GPIO_setPins/clearPins`）；
+- I2C/SPI 等控制器通过 `*_Regs *` 实例注入，具体实例、引脚、速率和 IRQ 由 Board 层绑定。
 
 > **HAL ≠ BSP**：HAL 位于最底层，只做外设寄存器的抽象封装。BSP（板级支持包）由 `2_device` + `3_board` 共同构成，在 HAL 之上处理具体的器件驱动和板级资源绑定。这种分层遵循行业惯例：HAL 屏蔽 MCU 差异，BSP 管理板级外设。
 
@@ -542,7 +543,7 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 - 定义 `oled_t`、`oled_cfg_t`；
 - 继承 `device_display_ops_t`；
 - 封装 `OLED_InitDevice()`、`OLED_GetBaseOps()`；
-- 通过 `OLED_SCL`、`OLED_SDA` 回调绑定软件 I2C 线控制。
+- 通过嵌入的 `device_iic_t` 访问由 Board 注入的 IIC endpoint。
 
 ### Board 层
 
@@ -553,11 +554,11 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 提供 OLED 软件 I2C 的 SCL/SDA GPIO 写函数（`OLED_SCL_Write`、`OLED_SDA_Write`）；
-- 通过 `oled_cfg_t` 注入 SCL/SDA 回调到 Device 层；
+- 提供 OLED 软件 IIC 的 SCL/SDA GPIO 写函数及其 `device_iic_ops_t` transport；
+- 通过 `OLED_BindDefaultIic()` 将 endpoint 注入 Device 层；
 - 提供 `OLED_Board_Init()` 板级初始化入口，实例化 `g_default_oled`。
 
-> **设计要点**：OLED 使用软件 I2C 而非硬件 I2C 外设，因此 SCL/SDA 线控通过函数指针注入。这与 ICM42688/MPU6050 的硬件 I2C ops 注入属于同一模式的不同变体。
+> **设计要点**：OLED 使用软件 IIC 而非硬件 IIC 外设，但仍实现 `device_iic_ops_t`。因此 Device 层只面向 `device_iic_t`，不保留 GPIO 位操作或区分软硬件总线。
 
 ### Facade 层
 
@@ -599,12 +600,12 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 实现 `icm42688_i2c_ops_t` 中的全部 7 个函数指针（`write_reg`、`read_reg`、`write_regs`、`read_regs`、`init`、`check_device`、`get_device_addr`）；
-- 通过 `icm42688_cfg_t.i2c` 将 I2C 传输函数注入 Device 层，消除 Device→Board 反向依赖；
+- 将 `g_iic_board_default_ops`、上下文和器件地址 `0x69` 组合为 `device_iic_t`；
+- 通过 `icm42688_cfg_t.iic` 将通用 IIC endpoint 注入 Device 层，消除 Device→Board 反向依赖；
 - 实例化 `g_icm42688` 设备对象并绑定默认配置（2000dps 陀螺仪、16G 加速度计）；
 - 提供 `ICM42688_Board_Init()` 和 `ICM42688_Board_GetDevice()`。
 
-> **设计要点**：原先 `icm42688_int.h/.c` 已删除，I2C 传输实现合并到 Board 层。Device 层通过 `cfg.i2c` 函数指针调用 I2C 传输，不再反向 include Board 层头文件。
+> **设计要点**：原先 `icm42688_int.h/.c` 已删除。Device 层通过 `cfg.iic` 组合成员调用 IIC endpoint，不再反向 include Board 层头文件，也不重复定义器件专属 ops 表。
 
 ### Facade 层
 
@@ -647,12 +648,12 @@ Compat 层曾是迁移期保留的兼容壳，用于保持旧 `#include "xxx_dri
 
 职责：
 
-- 实现 `mpu6050_i2c_ops_t` 中的全部 7 个函数指针，绑定 I2C 总线端口和器件地址（`0x68`）；
-- 通过 `mpu6050_cfg_t.i2c` 将 I2C 传输函数注入 Device 层；
+- 将 `g_iic_board_default_ops`、上下文和器件地址 `0x68` 组合为 `device_iic_t`；
+- 通过 `mpu6050_cfg_t.iic` 将通用 IIC endpoint 注入 Device 层；
 - 实例化 `g_mpu6050` 设备对象；
 - 提供 `MPU6050_Board_Init()` 和 `MPU6050_Board_GetDevice()`。
 
-> **设计要点**：与 ICM42688 完全相同的 I2C ops 注入模式。原先 `mpu6050_int.h/.c` 已删除。
+> **设计要点**：与 ICM42688 使用同一 `device_iic_t` 组合模式。原先 `mpu6050_int.h/.c` 已删除。
 
 ### Facade 层
 
@@ -1090,9 +1091,11 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 可以直接使用：
 
 - TI DriverLib；
-- SysConfig 生成宏；
-- 寄存器结构体；
-- I2C/SPI/UART/Timer 等底层外设。
+- 寄存器结构体和显式传入的外设实例；
+- I2C/SPI/UART/Timer 等底层外设 API。
+
+HAL 不应直接使用 `I2C_0_INST`、`SPI_0_INST`、`*_IOMUX`、`*_INT_IRQN` 或
+`SYSCFG_DL_*_init()`。这些 SysConfig 生成符号必须由 Board 层绑定后再注入 HAL。
 
 但不应该知道业务含义。例如可以知道”写某个 GPIO”，但不应该知道”这是蓝灯”或”这是蜂鸣器”。
 
@@ -1102,7 +1105,7 @@ HAL 层统一承担外设驱动和硬件抽象职责，是 Device 层与 MCU 厂
 | --- | --- |
 | `hal_gpio.h/.c` | GPIO 读写、翻转、初始化（`HAL_GPIO_WritePin`、`HAL_GPIO_ReadPin`、`HAL_GPIO_TogglePin`、`HAL_GPIO_InitOutput`、`HAL_GPIO_InitInput`、`HAL_GPIO_InitPeripheralOutput`、`HAL_GPIO_EnableOutput`） |
 | `hal_gpio_int.h/.c` | GPIO 中断状态读写（`HAL_GPIO_GetEnabledInterruptStatus`、`HAL_GPIO_ClearInterruptStatus`） |
-| `hal_iic.h/.c` | I2C 控制器读写（`HAL_IIC_Init`、`HAL_IIC_WriteReg`、`HAL_IIC_ReadReg` 等） |
+| `hal_iic.h/.c` | 通用 I2C 控制器读写（`hal_iic_init(I2C_Regs*, speed, time_fn)`、`hal_iic_write_reg8()`、`hal_iic_read_reg8()` 等） |
 | `hal_timer.h/.c` | TimerG 定时器/PWM 封装（`HAL_TimerG_StartCounter`、`HAL_TimerG_StopCounter`、`HAL_TimerG_SetLoadValue`、`HAL_TimerG_SetCCValue`、`HAL_TimerG_GetPendingInterrupt`） |
 | `hal_uart.h/.c` | UART 基础收发 |
 
@@ -1408,7 +1411,7 @@ App / Libs -> 优先 include 4_facade/*.h
 Board      -> include 2_device/*.h
 Device     -> include 1_core/*.h、0_hal/*.h、必要 ti_msp_dl_config.h
 Core       -> 不依赖 Device/Board/Facade
-HAL        -> 只依赖 DriverLib / ti_msp_dl_config.h
+HAL        -> 只依赖 DriverLib、寄存器类型和显式传入的实例
 ```
 
 头文件应尽量最小化 include：

@@ -1,12 +1,17 @@
 # 项目状态
 
-更新日期：2026-07-29
+更新日期：2026-08-03
 
 ## 当前结论
 
 模板已具备 `HAL → Core → Device → Board → Facade → App` 的五层骨架，并已有
 静态 ops 表、Board 配置注入和 Facade 兼容入口。Motor 已成为首个 PWM port
 Strategy/Adapter 注入样板；下一轮继续按同一原则收敛剩余反向依赖。
+
+IIC HAL 已改为接收显式 `I2C_Regs *` 实例；SysConfig 实例宏、总线速率和 IRQ
+绑定集中在 `3_board/iic_board.c`，HAL 可脱离当前板级生成宏编译。
+OLED、ICM42688 和 MPU6050 已统一通过 `1_core/device_iic.h` 的 `device_iic_t`
+组合 endpoint 注入总线；硬件 IIC 与 OLED 软件 IIC 分别由 Board transport 实现。
 
 ## 已验证基线
 
@@ -19,6 +24,9 @@ Strategy/Adapter 注入样板；下一轮继续按同一原则收敛剩余反向
 - Motor 的 Device 层已不依赖 Board、SysConfig 或 DriverLib；Timer、通道与极性通过
   Board 的静态 PWM port 注入，兼容 API 已移动至 Facade。
 - ARMClang 已对 Motor 的 Device、Board 与 Facade 文件完成语法检查。
+- MinGW host 语法检查已通过 `hal_iic.c`（IRQ、轮询及强制轮询寄存器读配置）、
+  `iic_board.c`、ICM42688/MPU6050 Board 文件；CMSIS 的 32 位指针警告属于 host
+  检查环境限制。
 
 ## 已知限制
 
@@ -26,6 +34,8 @@ Strategy/Adapter 注入样板；下一轮继续按同一原则收敛剩余反向
 - `6_apps/imu_app.c` 依赖缺失的 `imu_int.h`，不应在修复前加入受支持构建清单。
 - UART ISR 与云台 legacy 测试仍有跨层和并发风险；先记录，后续独立重构，避免与
   Motor 改动混合。
+- Keil/CMake 的 IIC 绑定现在由 `3_board/iic_board.c` 提供；未配置 IIC 实例时，
+  Board 访问器返回空指针，HAL 返回参数错误。
 - 当前 UV4 CLI 会启动驻留 GUI 进程但不写入新日志；在此工具行为恢复前，完整 Keil
   clean rebuild 不能作为本轮已通过的验证项。`run_keil.bat` 已在启动前清除旧日志，
   因此不会将历史构建结果误判为通过。

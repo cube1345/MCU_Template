@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "device_base.h"
+#include "device_iic.h"
 #include "device_ops.h"
 
 /* MPU6050 采样率分频寄存器地址。 */
@@ -135,25 +136,9 @@ typedef struct
 typedef struct mpu6050_s mpu6050_t;
 typedef device_sensor_ops_t mpu6050_base_ops_t;
 
-/**
-  * @brief I2C 传输操作函数指针表，由 Board 层实现并注入 Device 层。
-  *
-  * 与 ICM42688 共用相同的注入模式。Board 层在 *_board.c 中实现这些函数，
-  * 通过 mpu6050_cfg_t.i2c 注入，Device 层不再反向 include Board 层头文件。
-  */
-typedef struct {
-    int32_t (*write_reg)(uint8_t reg_addr, uint8_t reg_data);
-    int32_t (*read_reg)(uint8_t reg_addr, uint8_t *reg_data);
-    int32_t (*write_regs)(uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
-    int32_t (*read_regs)(uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
-    void    (*init)(void);
-    int32_t (*check_device)(void);
-    uint8_t (*get_device_addr)(void);
-} mpu6050_i2c_ops_t;
-
 typedef struct {
     mpu6050_init_config_t init_config;
-    const mpu6050_i2c_ops_t *i2c;
+    device_iic_t iic;
 } mpu6050_cfg_t;
 
 struct mpu6050_s {

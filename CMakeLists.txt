@@ -70,4 +70,10 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/1_core"
         "${CMAKE_CURRENT_SOURCE_DIR}/2_device")
     add_test(NAME motor_device_test COMMAND motor_device_test)
+
+    add_executable(device_iic_test
+        tests/device_iic_test.c)
+    target_include_directories(device_iic_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/1_core")
+    add_test(NAME device_iic_test COMMAND device_iic_test)
 endif()

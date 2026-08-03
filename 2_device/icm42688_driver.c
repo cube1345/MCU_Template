@@ -1,6 +1,5 @@
 #include "icm42688_driver.h"
 
-#include "hal_iic.h"
 #include "my_system_lib.h"
 
 /* 驱动层缓存的当前初始化配置，用于运行时查询和原始数据换算。 */
@@ -9,8 +8,8 @@ static icm42688_init_config_t g_icm42688_current_config;
 /* 当前配置缓存是否已经具备有效内容。 */
 static bool g_icm42688_has_current_config = false;
 
-/* board 层注入的 I2C 传输操作，供全局遗留函数使用。 */
-static const icm42688_i2c_ops_t *g_i2c = ((const icm42688_i2c_ops_t *)0);
+/* Board 层注入的公共 IIC 端点，供全局遗留函数使用。 */
+static const device_iic_t *g_iic = ((const device_iic_t *)0);
 
 volatile uint8_t g_icm_debug_last_who_am_i = 0U;
 volatile int32_t g_icm_debug_init_result = -2;
@@ -54,7 +53,8 @@ static inline const icm42688_base_ops_t *ICM42688_GetBaseOps(void)
 
 void ICM42688_InitDevice(icm42688_t *me, const icm42688_cfg_t *cfg)
 {
-    if ((me == (icm42688_t *)0) || (cfg == (const icm42688_cfg_t *)0)) {
+    if ((me == (icm42688_t *)0) || (cfg == (const icm42688_cfg_t *)0) ||
+        (DeviceIic_IsValid(&cfg->iic) == false)) {
         return;
     }
 
@@ -62,7 +62,7 @@ void ICM42688_InitDevice(icm42688_t *me, const icm42688_cfg_t *cfg)
     me->cfg = *cfg;
     me->base.is_init = 1U;
 
-    g_i2c = cfg->i2c;
+    g_iic = &me->cfg.iic;
 }
 
 int32_t ICM42688_ReadRawDevice(icm42688_t *me, icm42688_raw_data_t *raw_data)
@@ -114,13 +114,13 @@ static int8_t icm42688_status_to_legacy_ret(icm42688_status_t driver_status)
   * @param  int_status：接口绑定层返回的底层状态码。
   * @retval 返回驱动层统一状态码。
   */
-static icm42688_status_t icm42688_convert_int_status(int32_t int_status)
+static icm42688_status_t icm42688_convert_iic_status(device_iic_status_t iic_status)
 {
-    if (int_status == (int32_t)HAL_IIC_STATUS_OK) {
+    if (iic_status == DEVICE_IIC_STATUS_OK) {
         return ICM42688_STATUS_OK;
     }
 
-    if (int_status == (int32_t)HAL_IIC_STATUS_ERROR_PARAM) {
+    if (iic_status == DEVICE_IIC_STATUS_ERROR_PARAM) {
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
@@ -292,18 +292,18 @@ static void icm42688_store_current_config(const icm42688_init_config_t *init_con
   */
 icm42688_status_t icm42688_write_reg(uint8_t reg_addr, uint8_t reg_data)
 {
-    int32_t int_status;
+    device_iic_status_t iic_status;
     icm42688_status_t driver_status;
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->write_reg == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->write_reg(reg_addr, reg_data);
-    driver_status = icm42688_convert_int_status(int_status);
+    iic_status = DeviceIic_WriteReg8(g_iic, reg_addr, reg_data);
+    driver_status = icm42688_convert_iic_status(iic_status);
 
     g_icm_debug_last_reg = reg_addr;
     g_icm_debug_last_len = 1U;
-    g_icm_debug_last_write_status = (uint8_t) int_status;
+    g_icm_debug_last_write_status = (uint8_t)iic_status;
     g_icm_debug_last_io_result = (int32_t) driver_status;
     g_icm_debug_write_count++;
 
@@ -318,7 +318,7 @@ icm42688_status_t icm42688_write_reg(uint8_t reg_addr, uint8_t reg_data)
   */
 icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data)
 {
-    int32_t int_status;
+    device_iic_status_t iic_status;
     icm42688_status_t driver_status;
 
     if (reg_data == (uint8_t *) 0) {
@@ -326,15 +326,15 @@ icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data)
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->read_reg == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->read_reg(reg_addr, reg_data);
-    driver_status = icm42688_convert_int_status(int_status);
+    iic_status = DeviceIic_ReadReg8(g_iic, reg_addr, reg_data);
+    driver_status = icm42688_convert_iic_status(iic_status);
 
     g_icm_debug_last_reg = reg_addr;
     g_icm_debug_last_len = 1U;
-    g_icm_debug_last_read_status = (uint8_t) int_status;
+    g_icm_debug_last_read_status = (uint8_t)iic_status;
     g_icm_debug_last_io_result = (int32_t) driver_status;
     g_icm_debug_read_count++;
 
@@ -351,7 +351,7 @@ icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data)
 icm42688_status_t icm42688_write_regs(uint8_t reg_addr,
     const uint8_t *write_data, uint16_t write_length)
 {
-    int32_t int_status;
+    device_iic_status_t iic_status;
     icm42688_status_t driver_status;
 
     if ((write_data == (const uint8_t *) 0) || (write_length == 0U)) {
@@ -359,15 +359,15 @@ icm42688_status_t icm42688_write_regs(uint8_t reg_addr,
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->write_regs == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->write_regs(reg_addr, write_data, write_length);
-    driver_status = icm42688_convert_int_status(int_status);
+    iic_status = DeviceIic_WriteReg8s(g_iic, reg_addr, write_data, write_length);
+    driver_status = icm42688_convert_iic_status(iic_status);
 
     g_icm_debug_last_reg = reg_addr;
     g_icm_debug_last_len = (uint8_t) write_length;
-    g_icm_debug_last_write_status = (uint8_t) int_status;
+    g_icm_debug_last_write_status = (uint8_t)iic_status;
     g_icm_debug_last_io_result = (int32_t) driver_status;
     g_icm_debug_write_count++;
 
@@ -384,7 +384,7 @@ icm42688_status_t icm42688_write_regs(uint8_t reg_addr,
 icm42688_status_t icm42688_read_regs(uint8_t reg_addr,
     uint8_t *read_data, uint16_t read_length)
 {
-    int32_t int_status;
+    device_iic_status_t iic_status;
     icm42688_status_t driver_status;
 
     if ((read_data == (uint8_t *) 0) || (read_length == 0U)) {
@@ -392,15 +392,15 @@ icm42688_status_t icm42688_read_regs(uint8_t reg_addr,
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->read_regs == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->read_regs(reg_addr, read_data, read_length);
-    driver_status = icm42688_convert_int_status(int_status);
+    iic_status = DeviceIic_ReadReg8s(g_iic, reg_addr, read_data, read_length);
+    driver_status = icm42688_convert_iic_status(iic_status);
 
     g_icm_debug_last_reg = reg_addr;
     g_icm_debug_last_len = (uint8_t) read_length;
-    g_icm_debug_last_read_status = (uint8_t) int_status;
+    g_icm_debug_last_read_status = (uint8_t)iic_status;
     g_icm_debug_last_io_result = (int32_t) driver_status;
     g_icm_debug_read_count++;
 
@@ -443,10 +443,10 @@ icm42688_status_t icm42688_check_id(void)
      * 先确认器件地址存在应答，再读取 WHO_AM_I，可更清楚地区分“总线不通”
      * 和“器件 ID 错误”这两类问题。
      */
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->check_device == ((void *)0))) {
+    if (g_iic == (const device_iic_t *)0) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    driver_status = icm42688_convert_int_status(g_i2c->check_device());
+    driver_status = icm42688_convert_iic_status(DeviceIic_Probe(g_iic));
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
@@ -531,8 +531,10 @@ icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_c
      * 当前采用不带软复位的显式配置流程，优先保证通信稳定。
      * 先完成底层接口初始化与器件识别，再写入量程与 ODR 配置，最后唤醒 accel 和 gyro。
      */
-    if ((g_i2c != ((const icm42688_i2c_ops_t *)0)) && (g_i2c->init != ((void *)0))) {
-        g_i2c->init();
+    driver_status = icm42688_convert_iic_status(DeviceIic_Init(g_iic));
+    if (driver_status != ICM42688_STATUS_OK) {
+        g_icm_debug_init_result = (int32_t)icm42688_status_to_legacy_ret(driver_status);
+        return driver_status;
     }
 
     driver_status = icm42688_check_id();

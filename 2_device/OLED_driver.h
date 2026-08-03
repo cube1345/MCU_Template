@@ -2,23 +2,17 @@
 #define MYUSED_MYDEVICES_OLED_DRIVER_H
 
 #include <stdint.h>
+
 #include "OLED_Data.h"
 #include "device_base.h"
+#include "device_iic.h"
 #include "device_ops.h"
-
-
-
-typedef void(*OLED_SCL)(uint8_t state);
-typedef void(*OLED_SDA)(uint8_t state);
-
-void OLED_I2C_Init(OLED_SCL SCL,OLED_SDA SDA);
 
 typedef struct oled_s oled_t;
 typedef device_display_ops_t oled_base_ops_t;
 
 typedef struct {
-    OLED_SCL scl_write;
-    OLED_SDA sda_write;
+    device_iic_t iic;
 } oled_cfg_t;
 
 struct oled_s {
@@ -32,6 +26,12 @@ void OLED_InitDevice(oled_t *me, const oled_cfg_t *cfg);
 void OLED_InitDeviceEx(oled_t *me);
 void OLED_UpdateDevice(oled_t *me);
 void OLED_ClearDevice(oled_t *me);
+
+/**
+ * @brief  Bind the legacy default OLED API to a Board-provided IIC endpoint.
+ * @param  iic IIC endpoint carrying the transport, context, and 7-bit address.
+ */
+void OLED_BindDefaultIic(const device_iic_t *iic);
 
 
 /*参数宏定义*********************/
