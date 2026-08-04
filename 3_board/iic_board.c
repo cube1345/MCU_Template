@@ -41,6 +41,32 @@ static device_iic_status_t iic_board_convert_status(hal_iic_status_t status)
     return DEVICE_IIC_STATUS_ERROR_TRANSFER;
 }
 
+/**
+ * @brief  注册并初始化一个已由 SysConfig 配置完成的 IIC 控制器。
+ * @param  iic_instance IIC 控制器寄存器基址。
+ * @param  bus_speed_hz IIC 总线速率，单位为 Hz。
+ * @retval true 初始化成功；false 初始化失败。
+ */
+static bool iic_board_init_instance(I2C_Regs *iic_instance, uint32_t bus_speed_hz)
+{
+    return (hal_iic_init(iic_instance, bus_speed_hz, My_GetTimeUs) == HAL_IIC_STATUS_OK);
+}
+
+/**
+ * @brief  根据当前传输模式配置一个 IIC 中断通道。
+ * @param  interrupt_number IIC 控制器对应的 NVIC 中断号。
+ */
+static void iic_board_configure_irq(IRQn_Type interrupt_number)
+{
+#if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
+    NVIC_SetPriority(interrupt_number, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
+    NVIC_ClearPendingIRQ(interrupt_number);
+    NVIC_EnableIRQ(interrupt_number);
+#else
+    NVIC_DisableIRQ(interrupt_number);
+#endif
+}
+
 static device_iic_status_t iic_board_init(void *context)
 {
     IIC_Board_Init();
@@ -120,31 +146,19 @@ void IIC_Board_Init(void)
     }
 
 #if defined(I2C_0_INST)
-    if (hal_iic_init(I2C_0_INST, I2C_0_BUS_SPEED_HZ, My_GetTimeUs) == HAL_IIC_STATUS_OK) {
+    if (iic_board_init_instance(I2C_0_INST, I2C_0_BUS_SPEED_HZ) == true) {
         initialized = true;
 #if defined(I2C_0_INST_INT_IRQN)
-#if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    NVIC_SetPriority(I2C_0_INST_INT_IRQN, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-    NVIC_ClearPendingIRQ(I2C_0_INST_INT_IRQN);
-    NVIC_EnableIRQ(I2C_0_INST_INT_IRQN);
-#else
-    NVIC_DisableIRQ(I2C_0_INST_INT_IRQN);
-#endif
+        iic_board_configure_irq(I2C_0_INST_INT_IRQN);
 #endif
     }
 #endif
 
 #if defined(I2C_1_INST)
-    if (hal_iic_init(I2C_1_INST, I2C_1_BUS_SPEED_HZ, My_GetTimeUs) == HAL_IIC_STATUS_OK) {
+    if (iic_board_init_instance(I2C_1_INST, I2C_1_BUS_SPEED_HZ) == true) {
         initialized = true;
 #if defined(I2C_1_INST_INT_IRQN)
-#if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
-    NVIC_SetPriority(I2C_1_INST_INT_IRQN, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-    NVIC_ClearPendingIRQ(I2C_1_INST_INT_IRQN);
-    NVIC_EnableIRQ(I2C_1_INST_INT_IRQN);
-#else
-    NVIC_DisableIRQ(I2C_1_INST_INT_IRQN);
-#endif
+        iic_board_configure_irq(I2C_1_INST_INT_IRQN);
 #endif
     }
 #endif

@@ -375,12 +375,12 @@ uint8_t USART_App_FetchResult(USART_ParseResult_t* out_result)
  */
 void UART_0_INST_IRQHandler(void)
 {
-    switch (Platform_UART_GetPendingInterrupt(&g_uart0_camera)) {
+    switch (HAL_UART_GetPendingInterrupt(g_uart0_camera.regs)) {
         case DL_UART_MAIN_IIDX_RX:
         {
-            while (!Platform_UART_IsRXFIFOEmpty(&g_uart0_camera))
+            while (!HAL_UART_IsRXFIFOEmpty(g_uart0_camera.regs))
             {
-                uint8_t rx_byte = Platform_UART_ReceiveData(&g_uart0_camera);
+                uint8_t rx_byte = HAL_UART_ReceiveData(g_uart0_camera.regs);
                 USART_App_ParseByte(rx_byte);
             }
             break;

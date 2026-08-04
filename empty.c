@@ -66,10 +66,10 @@ int main(void)
  */
 void UART_2_INST_IRQHandler(void)
 {
-	switch (Platform_UART_GetPendingInterrupt(&g_uart2_debug)) {
+	switch (HAL_UART_GetPendingInterrupt(g_uart2_debug.regs)) {
 		case DL_UART_MAIN_IIDX_RX:
 		{
-			uint8_t res = Platform_UART_ReceiveData(&g_uart2_debug);
+			uint8_t res = HAL_UART_ReceiveData(g_uart2_debug.regs);
 			printf("Received: 0x%02X\r\n", res);
 			break;
 		}

@@ -119,7 +119,7 @@ bool DebugUart2_WriteChar(uint8_t ch)
 {
     uint32_t retry = MY_UART2_TX_RETRY_MAX;
 
-    while (!Platform_UART_TransmitDataCheck(&g_uart2_debug, ch)) {
+    while (!HAL_UART_TransmitDataCheck(g_uart2_debug.regs, ch)) {
         if (retry-- == 0U) {
             return false;
         }
@@ -143,7 +143,7 @@ bool DebugUart2_WriteBuffer(const uint8_t *data, uint32_t length)
     remain = length;
 
     while (remain > 0U) {
-        sent = Platform_UART_FillTXFIFO(&g_uart2_debug, (uint8_t *)txPtr, remain);
+        sent = HAL_UART_FillTXFIFO(g_uart2_debug.regs, txPtr, remain);
         if (sent == 0U) {
             if (retry-- == 0U) {
                 return false;
@@ -156,7 +156,7 @@ bool DebugUart2_WriteBuffer(const uint8_t *data, uint32_t length)
     }
 
     retry = MY_UART2_TX_RETRY_MAX;
-    while (Platform_UART_IsBusy(&g_uart2_debug)) {
+    while (HAL_UART_IsBusy(g_uart2_debug.regs)) {
         if (retry-- == 0U) {
             return false;
         }

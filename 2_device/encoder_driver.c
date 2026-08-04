@@ -1,4 +1,4 @@
-#include "./encoder_driver.h"
+#include "encoder_driver.h"
 
 static int32_t encoder_get_count_impl(encoder_t *me)
 {
@@ -93,6 +93,7 @@ static const encoder_base_ops_t g_encoder_base_ops = {
     .reset_count = Encoder_Base_ResetCount,
     .update_from_ab = Encoder_Base_UpdateFromAB,
 };
+
 
 /*
  * @name: Encoder_GetBaseOps

@@ -1011,6 +1011,16 @@
               <FilePath>..\3_board\iic_board.h</FilePath>
             </File>
             <File>
+              <FileName>spi_board.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\3_board\spi_board.c</FilePath>
+            </File>
+            <File>
+              <FileName>spi_board.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\3_board\spi_board.h</FilePath>
+            </File>
+            <File>
               <FileName>icm42688_board.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\3_board\icm42688_board.c</FilePath>
@@ -1144,6 +1154,16 @@
               <FileName>hal_iic.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\0_hal\hal_iic.h</FilePath>
+            </File>
+            <File>
+              <FileName>hal_spi.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\0_hal\hal_spi.c</FilePath>
+            </File>
+            <File>
+              <FileName>hal_spi.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\0_hal\hal_spi.h</FilePath>
             </File>
             <File>
               <FileName>hal_gpio.c</FileName>

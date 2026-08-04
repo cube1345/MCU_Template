@@ -76,4 +76,10 @@ if(BUILD_TESTING)
     target_include_directories(device_iic_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/1_core")
     add_test(NAME device_iic_test COMMAND device_iic_test)
+
+    add_executable(device_spi_test
+        tests/device_spi_test.c)
+    target_include_directories(device_spi_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/1_core")
+    add_test(NAME device_spi_test COMMAND device_spi_test)
 endif()

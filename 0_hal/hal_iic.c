@@ -183,6 +183,39 @@ static uint64_t hal_iic_get_time_us(I2C_Regs *iic_instance)
     return 0U;
 }
 
+/**
+ * @brief  检查 IIC 实例是否已注册到 HAL。
+ * @param  iic_instance 目标 IIC 控制器寄存器基址。
+ * @retval HAL_IIC_STATUS_OK 表示实例可用；否则返回参数错误。
+ */
+static hal_iic_status_t hal_iic_validate_instance(I2C_Regs *iic_instance)
+{
+    if ((iic_instance == (I2C_Regs *)0) ||
+        (hal_iic_get_slot_by_instance(iic_instance) >= HAL_IIC_MAX_INSTANCES)) {
+        return HAL_IIC_STATUS_ERROR_PARAM;
+    }
+
+    return HAL_IIC_STATUS_OK;
+}
+
+/**
+ * @brief  检查 IIC 数据传输所需的实例、缓冲区和长度。
+ * @param  iic_instance 目标 IIC 控制器寄存器基址。
+ * @param  data 读写数据缓冲区。
+ * @param  length 数据长度，单位为字节。
+ * @retval HAL_IIC_STATUS_OK 表示参数可用于传输；否则返回参数错误。
+ */
+static hal_iic_status_t hal_iic_validate_data_transfer(I2C_Regs *iic_instance,
+    const void *data, uint16_t length)
+{
+    if ((hal_iic_validate_instance(iic_instance) != HAL_IIC_STATUS_OK) ||
+        (data == (const void *)0) || (length == 0U)) {
+        return HAL_IIC_STATUS_ERROR_PARAM;
+    }
+
+    return HAL_IIC_STATUS_OK;
+}
+
 static void hal_iic_disable_irq_transaction_interrupts(I2C_Regs *iic_instance)
 {
     DL_I2C_disableInterrupt(iic_instance, HAL_IIC_CONTROLLER_IRQ_MASK);
@@ -765,16 +798,6 @@ static hal_iic_irq_context_t *hal_iic_get_irq_context(I2C_Regs *iic_instance)
     return (hal_iic_irq_context_t *) 0;
 }
 
-/**
-  * @brief  根据硬件 IIC 实例反查中断事务上下文。
-  * @param  iic_instance：目标硬件 IIC 实例指针。
-  * @retval 返回对应实例的中断事务上下文指针；若实例非法，则返回空指针。
-  */
-static hal_iic_irq_context_t *hal_iic_get_irq_context_by_instance(I2C_Regs *iic_instance)
-{
-    return hal_iic_get_irq_context(iic_instance);
-}
-
 static I2C_Regs *hal_iic_get_instance_by_irq_context(
     const hal_iic_irq_context_t *irq_context)
 {
@@ -1003,12 +1026,6 @@ static void hal_iic_start_irq_write(I2C_Regs *iic_instance, hal_iic_irq_context_
 }
 
 /**
-  * @brief  启动一次中断模式下的寄存器写事务。
-  * @param  iic_instance：目标硬件 IIC 实例指针。
-  * @param  irq_context：目标中断事务上下文指针。
-  * @retval None
-  */
-/**
   * @brief  启动一次中断模式下的连续读事务。
   * @param  iic_instance：目标硬件 IIC 实例指针。
   * @param  irq_context：目标中断事务上下文指针。
@@ -1028,12 +1045,6 @@ static void hal_iic_start_irq_read(I2C_Regs *iic_instance, hal_iic_irq_context_t
         DL_I2C_CONTROLLER_DIRECTION_RX, irq_context->rx_length);
 }
 
-/**
-  * @brief  启动一次中断模式下的寄存器读地址阶段事务。
-  * @param  iic_instance：目标硬件 IIC 实例指针。
-  * @param  irq_context：目标中断事务上下文指针。
-  * @retval None
-  */
 /**
   * @brief  根据当前阶段启动中断模式事务，用于统一调度写、读和寄存器访问流程。
   * @param  iic_instance：目标硬件 IIC 实例指针。
@@ -1292,7 +1303,7 @@ static void hal_iic_irq_drain_rx_fifo(I2C_Regs *iic_instance, hal_iic_irq_contex
   */
 static void hal_iic_irq_handler_common(I2C_Regs *iic_instance)
 {
-    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context_by_instance(iic_instance);
+    hal_iic_irq_context_t *irq_context = hal_iic_get_irq_context(iic_instance);
     hal_iic_profile_t *profile = hal_iic_get_profile_slot_by_instance(iic_instance);
     uint32_t interrupt_status;
     uint32_t controller_status;
@@ -1452,9 +1463,10 @@ const hal_iic_profile_t *hal_iic_get_profile(I2C_Regs *iic_instance)
   */
 hal_iic_status_t hal_iic_check_device(I2C_Regs *iic_instance, uint8_t device_addr)
 {
-    if ((iic_instance == (I2C_Regs *)0) ||
-        (hal_iic_get_slot_by_instance(iic_instance) >= HAL_IIC_MAX_INSTANCES)) {
-        return HAL_IIC_STATUS_ERROR_PARAM;
+    hal_iic_status_t status = hal_iic_validate_instance(iic_instance);
+
+    if (status != HAL_IIC_STATUS_OK) {
+        return status;
     }
 
     return hal_iic_probe_device(iic_instance, device_addr);
@@ -1471,13 +1483,11 @@ hal_iic_status_t hal_iic_check_device(I2C_Regs *iic_instance, uint8_t device_add
 hal_iic_status_t hal_iic_write_bytes(I2C_Regs *iic_instance, uint8_t device_addr,
     const uint8_t *write_data, uint16_t write_length)
 {
-    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+    hal_iic_status_t status = hal_iic_validate_data_transfer(
+        iic_instance, write_data, write_length);
 
-    if ((iic_instance == (I2C_Regs *)0) ||
-        (slot >= HAL_IIC_MAX_INSTANCES) ||
-        (write_data == (const uint8_t *) 0) ||
-        (write_length == 0U)) {
-        return HAL_IIC_STATUS_ERROR_PARAM;
+    if (status != HAL_IIC_STATUS_OK) {
+        return status;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
@@ -1498,13 +1508,11 @@ hal_iic_status_t hal_iic_write_bytes(I2C_Regs *iic_instance, uint8_t device_addr
 hal_iic_status_t hal_iic_read_bytes(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t *read_data, uint16_t read_length)
 {
-    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+    hal_iic_status_t status = hal_iic_validate_data_transfer(
+        iic_instance, read_data, read_length);
 
-    if ((iic_instance == (I2C_Regs *)0) ||
-        (slot >= HAL_IIC_MAX_INSTANCES) ||
-        (read_data == (uint8_t *) 0) ||
-        (read_length == 0U)) {
-        return HAL_IIC_STATUS_ERROR_PARAM;
+    if (status != HAL_IIC_STATUS_OK) {
+        return status;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
@@ -1554,13 +1562,11 @@ hal_iic_status_t hal_iic_read_reg8(I2C_Regs *iic_instance, uint8_t device_addr,
 hal_iic_status_t hal_iic_write_reg8s(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length)
 {
-    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+    hal_iic_status_t status = hal_iic_validate_data_transfer(
+        iic_instance, write_data, write_length);
 
-    if ((iic_instance == (I2C_Regs *)0) ||
-        (slot >= HAL_IIC_MAX_INSTANCES) ||
-        (write_data == (const uint8_t *) 0) ||
-        (write_length == 0U)) {
-        return HAL_IIC_STATUS_ERROR_PARAM;
+    if (status != HAL_IIC_STATUS_OK) {
+        return status;
     }
 
 #if (HAL_IIC_TRANSFER_MODE == HAL_IIC_TRANSFER_MODE_IRQ)
@@ -1583,16 +1589,15 @@ hal_iic_status_t hal_iic_write_reg8s(I2C_Regs *iic_instance, uint8_t device_addr
 hal_iic_status_t hal_iic_read_reg8s(I2C_Regs *iic_instance, uint8_t device_addr,
     uint8_t reg_addr, uint8_t *read_data, uint16_t read_length)
 {
-    hal_iic_slot_t slot = hal_iic_get_slot_by_instance(iic_instance);
+    hal_iic_slot_t slot;
     hal_iic_status_t status;
 
-    if ((iic_instance == (I2C_Regs *)0) ||
-        (slot >= HAL_IIC_MAX_INSTANCES) ||
-        (read_data == (uint8_t *) 0) ||
-        (read_length == 0U)) {
-        return HAL_IIC_STATUS_ERROR_PARAM;
+    status = hal_iic_validate_data_transfer(iic_instance, read_data, read_length);
+    if (status != HAL_IIC_STATUS_OK) {
+        return status;
     }
 
+    slot = hal_iic_get_slot_by_instance(iic_instance);
 
 #if (HAL_IIC_FORCE_POLL_REG_READ == 1U)
     {

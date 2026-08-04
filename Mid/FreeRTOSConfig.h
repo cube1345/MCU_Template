@@ -30,7 +30,6 @@
 
 
 #include "stdio.h"
-#include "ti_msp_dl_config.h"
 
 /*-----------------------------------------------------------
  * Application specific definitions.
