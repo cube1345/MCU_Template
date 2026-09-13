@@ -29,7 +29,8 @@ compile_commands.json
 /mx.scratch/
 
 # IDE and editor caches
-.vs/
+.vscode/
+.settings/
 .idea/
 *.user
 *.bak
