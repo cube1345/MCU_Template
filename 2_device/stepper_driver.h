@@ -1,6 +1,6 @@
 /**
  * @file stepper_driver.h
- * @brief MSPM0G3507 双步进电机底层驱动接口
+ * @brief 实例化步进电机及控制器接口
  * @author cube
  * @date 2026-04-11
  *
@@ -10,7 +10,7 @@
  * - HAL 层 (hal_gpio.h): GPIO 操作通过 HAL_GPIO_* 接口
  *
  * Device 层不包含任何 SysConfig 宏或具体引脚号,
- * 所有硬件资源由 Board 层通过 Stepper_Init() 注入。
+ * 所有硬件资源由 Board 层通过 Stepper_ControllerInit() 注入。
  */
 
 #ifndef MYUSED_MYDEVICES_STEPPER_DRIVER_H
@@ -28,8 +28,6 @@
 extern "C" {
 #endif
 
-/** @brief 当前工程支持的步进电机数量 */
-#define STEPPER_MOTOR_COUNT                    (2U)
 /** @brief 默认同步反向周期，单位 ms */
 #define STEPPER_DEFAULT_SYNC_REVERSE_PERIOD_MS (5000U)
 /** @brief 默认 STEP 高电平脉宽，单位 us */
@@ -62,12 +60,11 @@ typedef enum {
 /**
  * @brief 单个步进电机的板级硬件配置
  *
- * 由 Board 层根据实际 PCB 接线填充，通过 Stepper_Init() 注入 Device 层。
- * Device 层在运行期间只读，不修改这些字段。
+ * 由 Board 层注入，复制到各电机对象；极性可在运行期间配置。
  */
 typedef struct {
     platform_timer_t *pwmInst;          /**< STEP 脉冲对应的 PWM 定时器实例 */
-    uint32_t pwmClockHz;                /**< PWM 定时器输入时钟，单位 Hz */
+    uint32_t pwmClockHz;                /**< Counter clock after prescaler, Hz; Board configures edge-aligned PWM1. */
     platform_timer_channel_t pwmCcIndex; /**< STEP 输出使用的比较通道 */
     platform_gpio_t step;               /**< STEP GPIO */
     uint32_t stepAlternate;             /**< STEP 引脚 STM32 alternate function */
@@ -80,7 +77,7 @@ typedef struct {
 /**
  * @brief 步进电机控制定时器配置
  *
- * 用于 1ms 控制节拍（Stepper_Service1ms），由 Board 层提供。
+ * 用于 1ms 控制节拍，由 Board 层配置定时器和 IRQ 并调用 controller service。
  */
 typedef struct {
     platform_timer_t *timerInst;        /**< 控制定时器实例 */
@@ -108,7 +105,7 @@ typedef struct {
 } Stepper_MotorState_t;
 
 /**
- * @brief 两电机同步反向控制状态
+ * @brief 一个控制器下全部电机的同步反向控制状态
  */
 typedef struct {
     bool enabled;
@@ -117,47 +114,76 @@ typedef struct {
 } Stepper_SyncReverse_t;
 
 typedef struct stepper_s stepper_t;
+typedef struct stepper_controller_s stepper_controller_t;
 typedef device_stepper_ops_t stepper_base_ops_t;
 
 struct stepper_s {
     device_base_t base;
     const stepper_base_ops_t *ops;
-    Stepper_MotorId_t motor_id;
+    stepper_controller_t *controller;
+    uint32_t index;
+    stepper_hw_cfg_t cfg;
+    Stepper_MotorState_t state;
 };
 
-void Stepper_InitDevice(stepper_t *me, Stepper_MotorId_t motor_id);
+/** @brief 调用者持有的设备集合；初始化前必须清零，禁止按值复制活动对象。 */
+struct stepper_controller_s {
+    device_base_t base;
+    stepper_t *devices;
+    uint32_t count;
+    stepper_ctrl_timer_cfg_t ctrl_timer_cfg;
+    Stepper_SyncReverse_t sync_reverse;
+};
 
 /**
- * @brief 初始化步进底层驱动
- * @param hw_cfgs 双电机硬件配置数组，长度必须为 STEPPER_MOTOR_COUNT
- * @param ctrl_timer_cfg 控制定时器配置（1ms 节拍）
- * @param devices 双电机设备对象数组，由 Board 层分配并传入
- *
- * Board 层在完成 GPIO IOMUX 初始化后调用本函数，
- * 注入硬件配置、设备对象并初始化所有内部状态。
+ * @brief 初始化任意数量的电机；所有配置通过校验后才绑定对象和驱动 GPIO。
+ * @param me 已清零且未初始化的控制器。
+ * @param devices 已清零且未绑定的数组，生命周期覆盖控制器使用期。
+ * @param count 数组元素数；必须大于零。
+ * @param hw_cfgs 配置数组，长度为 count；配置复制到设备内。
+ * @param ctrl_timer_cfg 可为 NULL，使用外部 1ms 调度；定时器/IRQ 由 Board 启动。
+ * @return 配置无效或对象已初始化时返回 false，不改动现有对象。
  */
-void Stepper_Init(const stepper_hw_cfg_t hw_cfgs[STEPPER_MOTOR_COUNT],
-                  const stepper_ctrl_timer_cfg_t *ctrl_timer_cfg,
-                  stepper_t devices[STEPPER_MOTOR_COUNT]);
-
-void Stepper_Enable(Stepper_MotorId_t motorId, bool enable);
-void Stepper_EnableAll(bool enable);
-void Stepper_SetEnablePolarity(Stepper_MotorId_t motorId,
-                               Stepper_EnablePolarity_t polarity);
-void Stepper_SetForwardLevel(Stepper_MotorId_t motorId, bool forwardLevelHigh);
-void Stepper_SetDirection(Stepper_MotorId_t motorId,
-                          Stepper_Direction_t direction);
-void Stepper_ToggleDirection(Stepper_MotorId_t motorId);
-bool Stepper_SetFrequency(Stepper_MotorId_t motorId, uint32_t frequencyHz);
-bool Stepper_SetPulseWidthUs(Stepper_MotorId_t motorId, uint32_t pulseWidthUs);
-void Stepper_Start(Stepper_MotorId_t motorId);
-void Stepper_Stop(Stepper_MotorId_t motorId);
-void Stepper_StartAll(void);
-void Stepper_StopAll(void);
-void Stepper_ConfigSyncReverse(bool enable, uint32_t periodMs);
-void Stepper_Service1ms(void);
-const Stepper_MotorState_t *Stepper_GetState(Stepper_MotorId_t motorId);
-const Stepper_SyncReverse_t *Stepper_GetSyncReverseState(void);
+bool Stepper_ControllerInit(stepper_controller_t *me, stepper_t *devices,
+                            uint32_t count, const stepper_hw_cfg_t *hw_cfgs,
+                            const stepper_ctrl_timer_cfg_t *ctrl_timer_cfg);
+/** @brief 停止并失能所有电机，释放数组绑定；Board 须先停止服务和控制 IRQ。 */
+void Stepper_ControllerDeinit(stepper_controller_t *me);
+/** @brief 按索引获取对象；未初始化或越界时返回 NULL。 */
+stepper_t *Stepper_ControllerGetDevice(stepper_controller_t *me, uint32_t index);
+/** @brief 控制器批量使能，NULL/未初始化时无操作。 */
+void Stepper_ControllerEnableAll(stepper_controller_t *me, bool enable);
+/** @brief 启动所有已使能且时序有效的电机。 */
+void Stepper_ControllerStartAll(stepper_controller_t *me);
+/** @brief 停止控制器所有 STEP 输出。 */
+void Stepper_ControllerStopAll(stepper_controller_t *me);
+/** @brief 配置本控制器的同步反向；周期零使用默认值。 */
+void Stepper_ControllerConfigSyncReverse(stepper_controller_t *me, bool enable,
+                                         uint32_t period_ms);
+/** @brief 每控制器每毫秒调用一次；不要对每个电机重复调用。 */
+void Stepper_ControllerService1ms(stepper_controller_t *me);
+/** @brief 获取控制器只读同步状态；无效对象返回 NULL。 */
+const Stepper_SyncReverse_t *Stepper_ControllerGetSyncReverseState(const stepper_controller_t *me);
+/** @brief 设置电机使能；失能会先停止 STEP 输出。 */
+void Stepper_DeviceEnable(stepper_t *me, bool enable);
+/** @brief 配置 EN 有效电平；非法枚举不生效。 */
+void Stepper_DeviceSetEnablePolarity(stepper_t *me, Stepper_EnablePolarity_t polarity);
+/** @brief 配置正向对应的 DIR 电平。 */
+void Stepper_DeviceSetForwardLevel(stepper_t *me, bool high);
+/** @brief 设置逻辑方向；运行时暂停输出后切换。 */
+void Stepper_DeviceSetDirection(stepper_t *me, Stepper_Direction_t direction);
+/** @brief 翻转电机逻辑方向。 */
+void Stepper_DeviceToggleDirection(stepper_t *me);
+/** @brief 设置 STEP 频率，非法值返回 false 且保持旧时序。 */
+bool Stepper_DeviceSetFrequency(stepper_t *me, uint32_t frequency_hz);
+/** @brief 设置 STEP 脉宽，非法值返回 false 且保持旧时序。 */
+bool Stepper_DeviceSetPulseWidthUs(stepper_t *me, uint32_t pulse_width_us);
+/** @brief 启动已使能且时序有效的电机。 */
+void Stepper_DeviceStart(stepper_t *me);
+/** @brief 立即停止 STEP 并拉低引脚。 */
+void Stepper_DeviceStop(stepper_t *me);
+/** @brief 获取电机只读状态；无效对象返回 NULL。 */
+const Stepper_MotorState_t *Stepper_DeviceGetState(const stepper_t *me);
 
 #ifdef __cplusplus
 }

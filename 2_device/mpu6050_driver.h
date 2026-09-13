@@ -136,50 +136,56 @@ typedef struct mpu6050_s mpu6050_t;
 typedef device_sensor_ops_t mpu6050_base_ops_t;
 
 /**
-  * @brief I2C 传输操作函数指针表，由 Board 层实现并注入 Device 层。
+  * @brief Board transport callbacks: 0=success, 1=bad parameter, others=bus error.
   *
   * 与 ICM42688 共用相同的注入模式。Board 层在 *_board.c 中实现这些函数，
   * 通过 mpu6050_cfg_t.i2c 注入，Device 层不再反向 include Board 层头文件。
   */
 typedef struct {
-    int32_t (*write_reg)(uint8_t reg_addr, uint8_t reg_data);
-    int32_t (*read_reg)(uint8_t reg_addr, uint8_t *reg_data);
-    int32_t (*write_regs)(uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
-    int32_t (*read_regs)(uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
-    void    (*init)(void);
-    int32_t (*check_device)(void);
-    uint8_t (*get_device_addr)(void);
+    int32_t (*write_reg)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t reg_data);
+    int32_t (*read_reg)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t *reg_data);
+    int32_t (*write_regs)(void *context, uint8_t device_addr, uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
+    int32_t (*read_regs)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
+    int32_t (*init)(void *context);
+    int32_t (*check_device)(void *context, uint8_t device_addr);
 } mpu6050_i2c_ops_t;
 
 typedef struct {
     mpu6050_init_config_t init_config;
     const mpu6050_i2c_ops_t *i2c;
+    void *i2c_context;
+    uint8_t device_addr; /**< 7-bit I2C address, 0x68 or 0x69. */
+    void (*delay_ms)(void *context, uint32_t ms);
+    void *delay_context;
 } mpu6050_cfg_t;
 
 struct mpu6050_s {
     device_base_t base;
     const mpu6050_base_ops_t *ops;
     mpu6050_cfg_t cfg;
+    mpu6050_init_config_t current_config;
+    bool has_current_config;
 };
 
+/** @brief Bind callbacks. Call ops->init to initialize hardware; failure leaves is_init=0. */
 void MPU6050_InitDevice(mpu6050_t *me, const mpu6050_cfg_t *cfg);
 int32_t MPU6050_ReadRawDevice(mpu6050_t *me, mpu6050_raw_data_t *raw_data);
 int32_t MPU6050_ReadScaledDevice(mpu6050_t *me, mpu6050_scaled_data_t *scaled_data);
 
 mpu6050_status_t mpu6050_get_default_init_config(mpu6050_init_config_t *init_config);
-mpu6050_status_t mpu6050_get_current_config(mpu6050_init_config_t *init_config);
-mpu6050_status_t mpu6050_init(void);
-mpu6050_status_t mpu6050_init_with_config(const mpu6050_init_config_t *init_config);
-mpu6050_status_t mpu6050_init_default(void);
-mpu6050_status_t mpu6050_set_gyro_config(mpu6050_gyro_fs_t gyro_fs);
-mpu6050_status_t mpu6050_set_accel_config(mpu6050_accel_fs_t accel_fs);
-mpu6050_status_t mpu6050_check_id(void);
-mpu6050_status_t mpu6050_get_who_am_i(uint8_t *who_am_i);
-mpu6050_status_t mpu6050_write_reg(uint8_t reg_addr, uint8_t reg_data);
-mpu6050_status_t mpu6050_read_reg(uint8_t reg_addr, uint8_t *reg_data);
-mpu6050_status_t mpu6050_write_regs(uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
-mpu6050_status_t mpu6050_read_regs(uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
-mpu6050_status_t mpu6050_read_raw_data(mpu6050_raw_data_t *raw_data);
+mpu6050_status_t mpu6050_get_current_config(mpu6050_t *me, mpu6050_init_config_t *init_config);
+mpu6050_status_t mpu6050_init(mpu6050_t *me);
+mpu6050_status_t mpu6050_init_with_config(mpu6050_t *me, const mpu6050_init_config_t *init_config);
+mpu6050_status_t mpu6050_init_default(mpu6050_t *me);
+mpu6050_status_t mpu6050_set_gyro_config(mpu6050_t *me, mpu6050_gyro_fs_t gyro_fs);
+mpu6050_status_t mpu6050_set_accel_config(mpu6050_t *me, mpu6050_accel_fs_t accel_fs);
+mpu6050_status_t mpu6050_check_id(mpu6050_t *me);
+mpu6050_status_t mpu6050_get_who_am_i(mpu6050_t *me, uint8_t *who_am_i);
+mpu6050_status_t mpu6050_write_reg(mpu6050_t *me, uint8_t reg_addr, uint8_t reg_data);
+mpu6050_status_t mpu6050_read_reg(mpu6050_t *me, uint8_t reg_addr, uint8_t *reg_data);
+mpu6050_status_t mpu6050_write_regs(mpu6050_t *me, uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
+mpu6050_status_t mpu6050_read_regs(mpu6050_t *me, uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
+mpu6050_status_t mpu6050_read_raw_data(mpu6050_t *me, mpu6050_raw_data_t *raw_data);
 
 const char *mpu6050_get_gyro_fs_string(mpu6050_gyro_fs_t gyro_fs);
 const char *mpu6050_get_accel_fs_string(mpu6050_accel_fs_t accel_fs);

@@ -992,7 +992,7 @@ static imu_status_t imu_legacy_sensor_init(void *user_data) {
     return IMU_STATUS_ERROR_SENSOR;
   }
 
-  driver_status = ICM42688_Facade_InitDevice();
+  driver_status = ICM42688_Facade_InitDevice(dev);
   return imu_legacy_convert_driver_status(driver_status);
 }
 
@@ -1014,12 +1014,12 @@ static imu_status_t imu_legacy_sensor_read(imu_sensor_data_t *sensor_data,
     return IMU_STATUS_ERROR_SENSOR;
   }
 
-  driver_status = ICM42688_Facade_ReadRaw(&raw_data);
+  driver_status = ICM42688_Facade_ReadRaw(dev, &raw_data);
   if (driver_status != ICM42688_STATUS_OK) {
     return imu_legacy_convert_driver_status(driver_status);
   }
 
-  driver_status = icm42688_get_current_config(&g_imu_legacy_icm_init_config);
+  driver_status = icm42688_get_current_config(dev, &g_imu_legacy_icm_init_config);
   if (driver_status != ICM42688_STATUS_OK) {
     return imu_legacy_convert_driver_status(driver_status);
   }

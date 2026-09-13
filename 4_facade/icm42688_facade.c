@@ -12,9 +12,8 @@ icm42688_t *ICM42688_Facade_GetDevice(void)
     return ICM42688_Board_GetDevice();
 }
 
-icm42688_status_t ICM42688_Facade_InitDevice(void)
+icm42688_status_t ICM42688_Facade_InitDevice(icm42688_t *dev)
 {
-    icm42688_t *dev = ICM42688_Facade_GetDevice();
 
     if ((dev == (icm42688_t *)0) ||
         (dev->ops == (const icm42688_base_ops_t *)0) ||
@@ -25,9 +24,8 @@ icm42688_status_t ICM42688_Facade_InitDevice(void)
     return (icm42688_status_t)dev->ops->init(dev);
 }
 
-icm42688_status_t ICM42688_Facade_ReadRaw(icm42688_raw_data_t *raw_data)
+icm42688_status_t ICM42688_Facade_ReadRaw(icm42688_t *dev, icm42688_raw_data_t *raw_data)
 {
-    icm42688_t *dev = ICM42688_Facade_GetDevice();
 
     if ((raw_data == (icm42688_raw_data_t *)0) ||
         (dev == (icm42688_t *)0) ||
@@ -39,9 +37,8 @@ icm42688_status_t ICM42688_Facade_ReadRaw(icm42688_raw_data_t *raw_data)
     return (icm42688_status_t)dev->ops->read_raw(dev, raw_data);
 }
 
-icm42688_status_t ICM42688_Facade_ReadScaled(icm42688_scaled_data_t *scaled_data)
+icm42688_status_t ICM42688_Facade_ReadScaled(icm42688_t *dev, icm42688_scaled_data_t *scaled_data)
 {
-    icm42688_t *dev = ICM42688_Facade_GetDevice();
 
     if ((scaled_data == (icm42688_scaled_data_t *)0) ||
         (dev == (icm42688_t *)0) ||

@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stdio.h"
-#include "stm32f4xx_hal.h"
+#include "stm32u5xx_hal.h"
 
 uint32_t My_GetTick(void);
 uint64_t My_GetTimeUs(void);

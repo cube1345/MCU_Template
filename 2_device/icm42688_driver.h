@@ -183,17 +183,17 @@ typedef device_sensor_ops_t icm42688_base_ops_t;
 /**
   * @brief I2C 传输操作函数指针表，由 Board 层实现并注入 Device 层。
   *
+  * @note Return 0 on success, 1 for invalid arguments, other values for I/O failure.
   * Device 层通过此表调用 I2C 传输，不再反向 include Board 层头文件。
   * Board 层在 *_board.c 中实现这些函数，通过 icm42688_cfg_t.i2c 注入。
   */
 typedef struct {
-    int32_t (*write_reg)(uint8_t reg_addr, uint8_t reg_data);
-    int32_t (*read_reg)(uint8_t reg_addr, uint8_t *reg_data);
-    int32_t (*write_regs)(uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
-    int32_t (*read_regs)(uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
-    void    (*init)(void);
-    int32_t (*check_device)(void);
-    uint8_t (*get_device_addr)(void);
+    int32_t (*write_reg)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t reg_data);
+    int32_t (*read_reg)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t *reg_data);
+    int32_t (*write_regs)(void *context, uint8_t device_addr, uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
+    int32_t (*read_regs)(void *context, uint8_t device_addr, uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
+    void    (*init)(void *context);
+    int32_t (*check_device)(void *context, uint8_t device_addr);
 } icm42688_i2c_ops_t;
 
 typedef struct {
@@ -202,27 +202,37 @@ typedef struct {
     uint8_t last_read_status;
     uint8_t last_write_status;
     uint8_t last_reg;
-    uint8_t last_len;
+    uint16_t last_len;
     uint32_t read_count;
     uint32_t write_count;
     int32_t last_io_result;
 } icm42688_debug_info_t;
 
 typedef struct {
+
     icm42688_init_config_t init_config;
     const icm42688_i2c_ops_t *i2c;
+    void *i2c_context;
+    uint8_t device_addr; /**< 7-bit address, shifted only by HAL. */
+    void (*delay_ms)(void *context, uint32_t ms); /**< Required startup delay. */
+    void *delay_context;
 } icm42688_cfg_t;
 
 struct icm42688_s {
     device_base_t base;
     const icm42688_base_ops_t *ops;
     icm42688_cfg_t cfg;
+    icm42688_debug_info_t debug_info;
 };
 
+/** @brief Bind configuration without accessing hardware; resets readiness.
+ * @param me Device object, owned by the caller.
+ * @param cfg Copied configuration; referenced callbacks and contexts must outlive me.
+ */
 void ICM42688_InitDevice(icm42688_t *me, const icm42688_cfg_t *cfg);
 int32_t ICM42688_ReadRawDevice(icm42688_t *me, icm42688_raw_data_t *raw_data);
 int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled_data);
-void ICM42688_GetDebugInfo(icm42688_debug_info_t *debug_info);
+void ICM42688_GetDebugInfo(icm42688_t *me, icm42688_debug_info_t *debug_info);
 
 /**
   * @brief  获取 ICM42688 默认初始化配置。
@@ -235,84 +245,89 @@ icm42688_status_t icm42688_get_default_init_config(icm42688_init_config_t *init_
   * @brief  获取 ICM42688 当前缓存配置。
   * @param  init_config 当前配置输出结构体指针。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_get_current_config(icm42688_init_config_t *init_config);
+icm42688_status_t icm42688_get_current_config(icm42688_t *me, icm42688_init_config_t *init_config);
 
 /**
   * @brief  使用默认配置完整初始化 ICM42688。
-  * @param  None
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_init(void);
+icm42688_status_t icm42688_init(icm42688_t *me);
 
 /**
   * @brief  使用指定配置完整初始化 ICM42688。
   * @param  init_config 初始化配置结构体指针。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_config);
+icm42688_status_t icm42688_init_with_config(icm42688_t *me, const icm42688_init_config_t *init_config);
 
 /**
   * @brief  与 icm42688_init 等效的兼容接口。
-  * @param  None
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_init_default(void);
+icm42688_status_t icm42688_init_default(icm42688_t *me);
 
 /**
   * @brief  单独更新陀螺仪量程和 ODR 配置。
   * @param  gyro_fs 陀螺仪量程枚举值。
   * @param  gyro_odr 陀螺仪输出数据率枚举值。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_set_gyro_config(
-    icm42688_gyro_fs_t gyro_fs, icm42688_gyro_odr_t gyro_odr);
+icm42688_status_t icm42688_set_gyro_config(icm42688_t *me, icm42688_gyro_fs_t gyro_fs, icm42688_gyro_odr_t gyro_odr);
 
 /**
   * @brief  单独更新加速度计量程和 ODR 配置。
   * @param  accel_fs 加速度计量程枚举值。
   * @param  accel_odr 加速度计输出数据率枚举值。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_set_accel_config(
-    icm42688_accel_fs_t accel_fs, icm42688_accel_odr_t accel_odr);
+icm42688_status_t icm42688_set_accel_config(icm42688_t *me, icm42688_accel_fs_t accel_fs, icm42688_accel_odr_t accel_odr);
 
 /**
   * @brief  检查 ICM42688 WHO_AM_I 是否正确。
-  * @param  None
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_check_id(void);
+icm42688_status_t icm42688_check_id(icm42688_t *me);
 
 /**
   * @brief  读取 ICM42688 WHO_AM_I。
   * @param  who_am_i WHO_AM_I 输出指针。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_get_who_am_i(uint8_t *who_am_i);
+icm42688_status_t icm42688_get_who_am_i(icm42688_t *me, uint8_t *who_am_i);
 
 /**
   * @brief  执行 ICM42688 软件复位。
-  * @param  None
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_soft_reset(void);
+icm42688_status_t icm42688_soft_reset(icm42688_t *me);
 
 /**
   * @brief  向指定寄存器写入 1 字节数据。
   * @param  reg_addr 8 位寄存器地址。
   * @param  reg_data 待写入寄存器数据。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_write_reg(uint8_t reg_addr, uint8_t reg_data);
+icm42688_status_t icm42688_write_reg(icm42688_t *me, uint8_t reg_addr, uint8_t reg_data);
 
 /**
   * @brief  从指定寄存器读取 1 字节数据。
   * @param  reg_addr 8 位寄存器地址。
   * @param  reg_data 寄存器数据输出指针。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data);
+icm42688_status_t icm42688_read_reg(icm42688_t *me, uint8_t reg_addr, uint8_t *reg_data);
 
 /**
   * @brief  向连续寄存器写入多个字节数据。
@@ -320,9 +335,9 @@ icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data);
   * @param  write_data 写数据缓冲区首地址。
   * @param  write_length 写数据长度，单位字节。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_write_regs(
-    uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
+icm42688_status_t icm42688_write_regs(icm42688_t *me, uint8_t reg_addr, const uint8_t *write_data, uint16_t write_length);
 
 /**
   * @brief  从连续寄存器读取多个字节数据。
@@ -330,16 +345,17 @@ icm42688_status_t icm42688_write_regs(
   * @param  read_data 读数据缓冲区首地址。
   * @param  read_length 读数据长度，单位字节。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_read_regs(
-    uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
+icm42688_status_t icm42688_read_regs(icm42688_t *me, uint8_t reg_addr, uint8_t *read_data, uint16_t read_length);
 
 /**
   * @brief  连续读取原始温度、加速度计和陀螺仪数据。
   * @param  raw_data 原始数据输出结构体指针。
   * @retval 返回驱动状态码。
+    * @param me Target device instance.
   */
-icm42688_status_t icm42688_read_raw_data(icm42688_raw_data_t *raw_data);
+icm42688_status_t icm42688_read_raw_data(icm42688_t *me, icm42688_raw_data_t *raw_data);
 
 /**
   * @brief  获取陀螺仪量程对应的可读字符串。
@@ -395,12 +411,12 @@ icm42688_status_t icm42688_convert_raw_data(
     const icm42688_raw_data_t *raw_data,
     icm42688_scaled_data_t *scaled_data);
 
-int8_t bsp_Icm42688Init(void);
-int8_t bsp_IcmGetTemperature(int16_t *pTemp);
-int8_t bsp_IcmGetAccelerometer(icm42688RawData_t *accData);
-int8_t bsp_IcmGetGyroscope(icm42688RawData_t *gyroData);
-int8_t bsp_IcmGetAccelerometerReal(icm42688RealData_t *accData);
-int8_t bsp_IcmGetGyroscopeReal(icm42688RealData_t *gyroData);
-int8_t bsp_IcmGetRawData(icm42688RealData_t *accData, icm42688RealData_t *gyroData);
+int8_t bsp_Icm42688Init(icm42688_t *me);
+int8_t bsp_IcmGetTemperature(icm42688_t *me, int16_t *pTemp);
+int8_t bsp_IcmGetAccelerometer(icm42688_t *me, icm42688RawData_t *accData);
+int8_t bsp_IcmGetGyroscope(icm42688_t *me, icm42688RawData_t *gyroData);
+int8_t bsp_IcmGetAccelerometerReal(icm42688_t *me, icm42688RealData_t *accData);
+int8_t bsp_IcmGetGyroscopeReal(icm42688_t *me, icm42688RealData_t *gyroData);
+int8_t bsp_IcmGetRawData(icm42688_t *me, icm42688RealData_t *accData, icm42688RealData_t *gyroData);
 
 #endif /* MYUSED_MYDEVICES_ICM42688_DRIVER_H */

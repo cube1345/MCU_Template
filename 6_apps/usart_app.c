@@ -1,6 +1,5 @@
 #include "usart_app.h"
 #include "../4_facade/uart_facade.h"
-#include "stm32f4xx.h"
 
 /* 保存最近一次解析成功的结果 */
 static USART_ParseResult_t g_usart_result;

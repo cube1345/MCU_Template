@@ -1,26 +1,13 @@
 #include "icm42688_driver.h"
 
-#include "hal_iic.h"
-#include "my_system_lib.h"
+#include <string.h>
 
-/* 驱动层缓存的当前初始化配置，用于运行时查询和原始数据换算。 */
-static icm42688_init_config_t g_icm42688_current_config;
-
-/* 当前配置缓存是否已经具备有效内容。 */
-static bool g_icm42688_has_current_config = false;
-
-/* board 层注入的 I2C 传输操作，供全局遗留函数使用。 */
-static const icm42688_i2c_ops_t *g_i2c = ((const icm42688_i2c_ops_t *)0);
-
-static volatile uint8_t g_icm_debug_last_who_am_i = 0U;
-static volatile int32_t g_icm_debug_init_result = -2;
-static volatile uint8_t g_icm_debug_last_read_status = 0xFFU;
-static volatile uint8_t g_icm_debug_last_write_status = 0xFFU;
-static volatile uint8_t g_icm_debug_last_reg = 0U;
-static volatile uint8_t g_icm_debug_last_len = 0U;
-static volatile uint32_t g_icm_debug_read_count = 0U;
-static volatile uint32_t g_icm_debug_write_count = 0U;
-static volatile int32_t g_icm_debug_last_io_result = -2;
+/** @brief Check that an object has a transport binding; readiness is separate. */
+static bool icm42688_is_bound(const icm42688_t *me)
+{
+    return (me != 0) && (me->ops != 0) && (me->cfg.i2c != 0) &&
+           (me->cfg.device_addr <= 0x7FU);
+}
 
 static int32_t ICM42688_Base_Init(void *me)
 {
@@ -28,7 +15,7 @@ static int32_t ICM42688_Base_Init(void *me)
     if (dev == (icm42688_t *)0) {
         return (int32_t)ICM42688_STATUS_ERROR_PARAM;
     }
-    return (int32_t)icm42688_init_with_config(&dev->cfg.init_config);
+    return (int32_t)icm42688_init_with_config(dev, &dev->cfg.init_config);
 }
 
 static int32_t ICM42688_Base_ReadRaw(void *me, void *raw_data)
@@ -54,15 +41,22 @@ static inline const icm42688_base_ops_t *ICM42688_GetBaseOps(void)
 
 void ICM42688_InitDevice(icm42688_t *me, const icm42688_cfg_t *cfg)
 {
-    if ((me == (icm42688_t *)0) || (cfg == (const icm42688_cfg_t *)0)) {
+    icm42688_cfg_t config;
+
+    if (me == 0) {
         return;
     }
-
+    if (cfg == 0) {
+        memset(me, 0, sizeof(*me));
+        return;
+    }
+    config = *cfg;
+    memset(me, 0, sizeof(*me));
     me->ops = ICM42688_GetBaseOps();
-    me->cfg = *cfg;
-    me->base.is_init = 1U;
-
-    g_i2c = cfg->i2c;
+    me->cfg = config;
+    me->debug_info.init_result = -2;
+    me->debug_info.last_read_status = 0xFFU;
+    me->debug_info.last_write_status = 0xFFU;
 }
 
 int32_t ICM42688_ReadRawDevice(icm42688_t *me, icm42688_raw_data_t *raw_data)
@@ -70,7 +64,7 @@ int32_t ICM42688_ReadRawDevice(icm42688_t *me, icm42688_raw_data_t *raw_data)
     if ((me == (icm42688_t *)0) || (me->base.is_init == 0U)) {
         return (int32_t)ICM42688_STATUS_ERROR_PARAM;
     }
-    return (int32_t)icm42688_read_raw_data(raw_data);
+    return (int32_t)icm42688_read_raw_data(me, raw_data);
 }
 
 int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled_data)
@@ -83,7 +77,7 @@ int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled
         return (int32_t)ICM42688_STATUS_ERROR_PARAM;
     }
 
-    status = icm42688_read_raw_data(&raw_data);
+    status = icm42688_read_raw_data(me, &raw_data);
     if (status != ICM42688_STATUS_OK) {
         return (int32_t)status;
     }
@@ -91,21 +85,11 @@ int32_t ICM42688_ReadScaledDevice(icm42688_t *me, icm42688_scaled_data_t *scaled
     return (int32_t)icm42688_convert_raw_data(&me->cfg.init_config, &raw_data, scaled_data);
 }
 
-void ICM42688_GetDebugInfo(icm42688_debug_info_t *debug_info)
+void ICM42688_GetDebugInfo(icm42688_t *me, icm42688_debug_info_t *debug_info)
 {
-    if (debug_info == (icm42688_debug_info_t *)0) {
-        return;
+    if ((me != 0) && (debug_info != 0)) {
+        *debug_info = me->debug_info;
     }
-
-    debug_info->last_who_am_i = g_icm_debug_last_who_am_i;
-    debug_info->init_result = g_icm_debug_init_result;
-    debug_info->last_read_status = g_icm_debug_last_read_status;
-    debug_info->last_write_status = g_icm_debug_last_write_status;
-    debug_info->last_reg = g_icm_debug_last_reg;
-    debug_info->last_len = g_icm_debug_last_len;
-    debug_info->read_count = g_icm_debug_read_count;
-    debug_info->write_count = g_icm_debug_write_count;
-    debug_info->last_io_result = g_icm_debug_last_io_result;
 }
 
 static int8_t icm42688_status_to_legacy_ret(icm42688_status_t driver_status)
@@ -133,11 +117,11 @@ static int8_t icm42688_status_to_legacy_ret(icm42688_status_t driver_status)
   */
 static icm42688_status_t icm42688_convert_int_status(int32_t int_status)
 {
-    if (int_status == (int32_t)HAL_IIC_STATUS_OK) {
+    if (int_status == (int32_t)ICM42688_STATUS_OK) {
         return ICM42688_STATUS_OK;
     }
 
-    if (int_status == (int32_t)HAL_IIC_STATUS_ERROR_PARAM) {
+    if (int_status == (int32_t)ICM42688_STATUS_ERROR_PARAM) {
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
@@ -291,14 +275,13 @@ static bool icm42688_is_valid_init_config(const icm42688_init_config_t *init_con
   * @param  init_config 已经确认合法的初始化配置结构体指针。
   * @retval None
   */
-static void icm42688_store_current_config(const icm42688_init_config_t *init_config)
+static void icm42688_store_current_config(icm42688_t *me, const icm42688_init_config_t *init_config)
 {
     if (init_config == (const icm42688_init_config_t *) 0) {
         return;
     }
 
-    g_icm42688_current_config = *init_config;
-    g_icm42688_has_current_config = true;
+    me->cfg.init_config = *init_config;
 }
 
 /**
@@ -307,22 +290,26 @@ static void icm42688_store_current_config(const icm42688_init_config_t *init_con
   * @param  reg_data：待写入的寄存器数据。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_write_reg(uint8_t reg_addr, uint8_t reg_data)
+icm42688_status_t icm42688_write_reg(icm42688_t *me, uint8_t reg_addr, uint8_t reg_data)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     int32_t int_status;
     icm42688_status_t driver_status;
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->write_reg == ((void *)0))) {
+    if ((me->cfg.i2c == ((const icm42688_i2c_ops_t *)0)) || (me->cfg.i2c->write_reg == ((void *)0))) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->write_reg(reg_addr, reg_data);
+    int_status = me->cfg.i2c->write_reg(me->cfg.i2c_context, me->cfg.device_addr, reg_addr, reg_data);
     driver_status = icm42688_convert_int_status(int_status);
 
-    g_icm_debug_last_reg = reg_addr;
-    g_icm_debug_last_len = 1U;
-    g_icm_debug_last_write_status = (uint8_t) int_status;
-    g_icm_debug_last_io_result = (int32_t) driver_status;
-    g_icm_debug_write_count++;
+    me->debug_info.last_reg = reg_addr;
+    me->debug_info.last_len = 1U;
+    me->debug_info.last_write_status = (uint8_t) int_status;
+    me->debug_info.last_io_result = (int32_t) driver_status;
+    me->debug_info.write_count++;
 
     return driver_status;
 }
@@ -333,27 +320,31 @@ icm42688_status_t icm42688_write_reg(uint8_t reg_addr, uint8_t reg_data)
   * @param  reg_data：寄存器数据输出指针。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data)
+icm42688_status_t icm42688_read_reg(icm42688_t *me, uint8_t reg_addr, uint8_t *reg_data)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     int32_t int_status;
     icm42688_status_t driver_status;
 
     if (reg_data == (uint8_t *) 0) {
-        g_icm_debug_last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
+        me->debug_info.last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->read_reg == ((void *)0))) {
+    if ((me->cfg.i2c == ((const icm42688_i2c_ops_t *)0)) || (me->cfg.i2c->read_reg == ((void *)0))) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->read_reg(reg_addr, reg_data);
+    int_status = me->cfg.i2c->read_reg(me->cfg.i2c_context, me->cfg.device_addr, reg_addr, reg_data);
     driver_status = icm42688_convert_int_status(int_status);
 
-    g_icm_debug_last_reg = reg_addr;
-    g_icm_debug_last_len = 1U;
-    g_icm_debug_last_read_status = (uint8_t) int_status;
-    g_icm_debug_last_io_result = (int32_t) driver_status;
-    g_icm_debug_read_count++;
+    me->debug_info.last_reg = reg_addr;
+    me->debug_info.last_len = 1U;
+    me->debug_info.last_read_status = (uint8_t) int_status;
+    me->debug_info.last_io_result = (int32_t) driver_status;
+    me->debug_info.read_count++;
 
     return driver_status;
 }
@@ -365,28 +356,32 @@ icm42688_status_t icm42688_read_reg(uint8_t reg_addr, uint8_t *reg_data)
   * @param  write_length：待写入数据长度，单位为字节。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_write_regs(uint8_t reg_addr,
+icm42688_status_t icm42688_write_regs(icm42688_t *me, uint8_t reg_addr,
     const uint8_t *write_data, uint16_t write_length)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     int32_t int_status;
     icm42688_status_t driver_status;
 
     if ((write_data == (const uint8_t *) 0) || (write_length == 0U)) {
-        g_icm_debug_last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
+        me->debug_info.last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->write_regs == ((void *)0))) {
+    if ((me->cfg.i2c == ((const icm42688_i2c_ops_t *)0)) || (me->cfg.i2c->write_regs == ((void *)0))) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->write_regs(reg_addr, write_data, write_length);
+    int_status = me->cfg.i2c->write_regs(me->cfg.i2c_context, me->cfg.device_addr, reg_addr, write_data, write_length);
     driver_status = icm42688_convert_int_status(int_status);
 
-    g_icm_debug_last_reg = reg_addr;
-    g_icm_debug_last_len = (uint8_t) write_length;
-    g_icm_debug_last_write_status = (uint8_t) int_status;
-    g_icm_debug_last_io_result = (int32_t) driver_status;
-    g_icm_debug_write_count++;
+    me->debug_info.last_reg = reg_addr;
+    me->debug_info.last_len = write_length;
+    me->debug_info.last_write_status = (uint8_t) int_status;
+    me->debug_info.last_io_result = (int32_t) driver_status;
+    me->debug_info.write_count++;
 
     return driver_status;
 }
@@ -398,28 +393,32 @@ icm42688_status_t icm42688_write_regs(uint8_t reg_addr,
   * @param  read_length：待读取数据长度，单位为字节。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_read_regs(uint8_t reg_addr,
+icm42688_status_t icm42688_read_regs(icm42688_t *me, uint8_t reg_addr,
     uint8_t *read_data, uint16_t read_length)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     int32_t int_status;
     icm42688_status_t driver_status;
 
     if ((read_data == (uint8_t *) 0) || (read_length == 0U)) {
-        g_icm_debug_last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
+        me->debug_info.last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->read_regs == ((void *)0))) {
+    if ((me->cfg.i2c == ((const icm42688_i2c_ops_t *)0)) || (me->cfg.i2c->read_regs == ((void *)0))) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    int_status = g_i2c->read_regs(reg_addr, read_data, read_length);
+    int_status = me->cfg.i2c->read_regs(me->cfg.i2c_context, me->cfg.device_addr, reg_addr, read_data, read_length);
     driver_status = icm42688_convert_int_status(int_status);
 
-    g_icm_debug_last_reg = reg_addr;
-    g_icm_debug_last_len = (uint8_t) read_length;
-    g_icm_debug_last_read_status = (uint8_t) int_status;
-    g_icm_debug_last_io_result = (int32_t) driver_status;
-    g_icm_debug_read_count++;
+    me->debug_info.last_reg = reg_addr;
+    me->debug_info.last_len = read_length;
+    me->debug_info.last_read_status = (uint8_t) int_status;
+    me->debug_info.last_io_result = (int32_t) driver_status;
+    me->debug_info.read_count++;
 
     return driver_status;
 }
@@ -429,18 +428,22 @@ icm42688_status_t icm42688_read_regs(uint8_t reg_addr,
   * @param  who_am_i：器件标识输出指针。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_get_who_am_i(uint8_t *who_am_i)
+icm42688_status_t icm42688_get_who_am_i(icm42688_t *me, uint8_t *who_am_i)
 {
-    icm42688_status_t driver_status;
-
-    if (who_am_i == (uint8_t *) 0) {
-        g_icm_debug_last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
+    if (!icm42688_is_bound(me)) {
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    driver_status = icm42688_read_reg(ICM42688_REG_WHO_AM_I, who_am_i);
+    icm42688_status_t driver_status;
+
+    if (who_am_i == (uint8_t *) 0) {
+        me->debug_info.last_io_result = (int32_t) ICM42688_STATUS_ERROR_PARAM;
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    driver_status = icm42688_read_reg(me, ICM42688_REG_WHO_AM_I, who_am_i);
     if (driver_status == ICM42688_STATUS_OK) {
-        g_icm_debug_last_who_am_i = *who_am_i;
+        me->debug_info.last_who_am_i = *who_am_i;
     }
 
     return driver_status;
@@ -451,8 +454,12 @@ icm42688_status_t icm42688_get_who_am_i(uint8_t *who_am_i)
   * @param  None
   * @retval 返回驱动状态码，返回 ICM42688_STATUS_OK 表示器件 ID 正确。
   */
-icm42688_status_t icm42688_check_id(void)
+icm42688_status_t icm42688_check_id(icm42688_t *me)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_status_t driver_status;
     uint8_t who_am_i = 0U;
 
@@ -460,15 +467,15 @@ icm42688_status_t icm42688_check_id(void)
      * 先确认器件地址存在应答，再读取 WHO_AM_I，可更清楚地区分“总线不通”
      * 和“器件 ID 错误”这两类问题。
      */
-    if ((g_i2c == ((const icm42688_i2c_ops_t *)0)) || (g_i2c->check_device == ((void *)0))) {
+    if ((me->cfg.i2c == ((const icm42688_i2c_ops_t *)0)) || (me->cfg.i2c->check_device == ((void *)0))) {
         return ICM42688_STATUS_ERROR_COMM;
     }
-    driver_status = icm42688_convert_int_status(g_i2c->check_device());
+    driver_status = icm42688_convert_int_status(me->cfg.i2c->check_device(me->cfg.i2c_context, me->cfg.device_addr));
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
 
-    driver_status = icm42688_get_who_am_i(&who_am_i);
+    driver_status = icm42688_get_who_am_i(me, &who_am_i);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
@@ -485,9 +492,14 @@ icm42688_status_t icm42688_check_id(void)
   * @param  None
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_soft_reset(void)
+icm42688_status_t icm42688_soft_reset(icm42688_t *me)
 {
-    return icm42688_write_reg(ICM42688_REG_DEVICE_CONFIG, ICM42688_SOFT_RESET_MASK);
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    me->base.is_init = 0U;
+    return icm42688_write_reg(me, ICM42688_REG_DEVICE_CONFIG, ICM42688_SOFT_RESET_MASK);
 }
 
 /**
@@ -509,18 +521,12 @@ icm42688_status_t icm42688_get_default_init_config(icm42688_init_config_t *init_
     return ICM42688_STATUS_OK;
 }
 
-icm42688_status_t icm42688_get_current_config(icm42688_init_config_t *init_config)
+icm42688_status_t icm42688_get_current_config(icm42688_t *me, icm42688_init_config_t *init_config)
 {
-    if (init_config == (icm42688_init_config_t *) 0) {
+    if (!icm42688_is_bound(me) || (init_config == 0)) {
         return ICM42688_STATUS_ERROR_PARAM;
     }
-
-    if (g_icm42688_has_current_config == false) {
-        return icm42688_get_default_init_config(init_config);
-    }
-
-    *init_config = g_icm42688_current_config;
-
+    *init_config = me->cfg.init_config;
     return ICM42688_STATUS_OK;
 }
 
@@ -529,8 +535,16 @@ icm42688_status_t icm42688_get_current_config(icm42688_init_config_t *init_confi
  * @param  init_config：初始化配置结构体指针。
  * @retval 返回驱动状态码。
  */
-icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_config)
+icm42688_status_t icm42688_init_with_config(icm42688_t *me, const icm42688_init_config_t *init_config)
 {
+    if (me != 0) {
+        me->base.is_init = 0U;
+        me->debug_info.init_result = -2;
+    }
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_status_t driver_status;
     uint8_t gyro_config0;
     uint8_t accel_config0;
@@ -539,6 +553,9 @@ icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_c
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
+    if (me->cfg.delay_ms == 0) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
     gyro_config0 = icm42688_build_gyro_config0(
         init_config->gyro_fs, init_config->gyro_odr);
     accel_config0 = icm42688_build_accel_config0(
@@ -548,38 +565,38 @@ icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_c
      * 当前采用不带软复位的显式配置流程，优先保证通信稳定。
      * 先完成底层接口初始化与器件识别，再写入量程与 ODR 配置，最后唤醒 accel 和 gyro。
      */
-    if ((g_i2c != ((const icm42688_i2c_ops_t *)0)) && (g_i2c->init != ((void *)0))) {
-        g_i2c->init();
+    if ((me->cfg.i2c != ((const icm42688_i2c_ops_t *)0)) && (me->cfg.i2c->init != ((void *)0))) {
+        me->cfg.i2c->init(me->cfg.i2c_context);
     }
 
-    driver_status = icm42688_check_id();
+    driver_status = icm42688_check_id(me);
     if (driver_status != ICM42688_STATUS_OK) {
-        g_icm_debug_init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
+        me->debug_info.init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
         return driver_status;
     }
 
-    driver_status = icm42688_write_reg(ICM42688_REG_GYRO_CONFIG0, gyro_config0);
+    driver_status = icm42688_write_reg(me, ICM42688_REG_GYRO_CONFIG0, gyro_config0);
     if (driver_status != ICM42688_STATUS_OK) {
-        g_icm_debug_init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
+        me->debug_info.init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
         return driver_status;
     }
 
-    driver_status = icm42688_write_reg(ICM42688_REG_ACCEL_CONFIG0, accel_config0);
+    driver_status = icm42688_write_reg(me, ICM42688_REG_ACCEL_CONFIG0, accel_config0);
     if (driver_status != ICM42688_STATUS_OK) {
-        g_icm_debug_init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
+        me->debug_info.init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
         return driver_status;
     }
 
-    driver_status = icm42688_write_reg(
-        ICM42688_REG_PWR_MGMT0, ICM42688_PWR_MGMT0_ACCEL_GYRO_LN);
+    driver_status = icm42688_write_reg(me, ICM42688_REG_PWR_MGMT0, ICM42688_PWR_MGMT0_ACCEL_GYRO_LN);
     if (driver_status != ICM42688_STATUS_OK) {
-        g_icm_debug_init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
+        me->debug_info.init_result = (int32_t) icm42688_status_to_legacy_ret(driver_status);
         return driver_status;
     }
 
-    delay_ms(ICM42688_SENSOR_START_DELAY_MS);
-    icm42688_store_current_config(init_config);
-    g_icm_debug_init_result = 0;
+    me->cfg.delay_ms(me->cfg.delay_context, ICM42688_SENSOR_START_DELAY_MS);
+    icm42688_store_current_config(me, init_config);
+    me->debug_info.init_result = 0;
+    me->base.is_init = 1U;
 
     return ICM42688_STATUS_OK;
 }
@@ -589,8 +606,12 @@ icm42688_status_t icm42688_init_with_config(const icm42688_init_config_t *init_c
   * @param  None
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_init(void)
+icm42688_status_t icm42688_init(icm42688_t *me)
 {
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_status_t driver_status;
 
@@ -599,7 +620,7 @@ icm42688_status_t icm42688_init(void)
         return driver_status;
     }
 
-    return icm42688_init_with_config(&init_config);
+    return icm42688_init_with_config(me, &init_config);
 }
 
 /**
@@ -607,14 +628,25 @@ icm42688_status_t icm42688_init(void)
   * @param  None
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_init_default(void)
+icm42688_status_t icm42688_init_default(icm42688_t *me)
 {
-    return icm42688_init();
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    return icm42688_init(me);
 }
 
-icm42688_status_t icm42688_set_gyro_config(
-    icm42688_gyro_fs_t gyro_fs, icm42688_gyro_odr_t gyro_odr)
+icm42688_status_t icm42688_set_gyro_config(icm42688_t *me, icm42688_gyro_fs_t gyro_fs, icm42688_gyro_odr_t gyro_odr)
 {
+    if ((me == 0) || (me->base.is_init == 0U)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_status_t driver_status;
     uint8_t gyro_config0;
@@ -624,27 +656,34 @@ icm42688_status_t icm42688_set_gyro_config(
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
 
     gyro_config0 = icm42688_build_gyro_config0(gyro_fs, gyro_odr);
-    driver_status = icm42688_write_reg(ICM42688_REG_GYRO_CONFIG0, gyro_config0);
+    driver_status = icm42688_write_reg(me, ICM42688_REG_GYRO_CONFIG0, gyro_config0);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
 
     init_config.gyro_fs = gyro_fs;
     init_config.gyro_odr = gyro_odr;
-    icm42688_store_current_config(&init_config);
+    icm42688_store_current_config(me, &init_config);
 
     return ICM42688_STATUS_OK;
 }
 
-icm42688_status_t icm42688_set_accel_config(
-    icm42688_accel_fs_t accel_fs, icm42688_accel_odr_t accel_odr)
+icm42688_status_t icm42688_set_accel_config(icm42688_t *me, icm42688_accel_fs_t accel_fs, icm42688_accel_odr_t accel_odr)
 {
+    if ((me == 0) || (me->base.is_init == 0U)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_status_t driver_status;
     uint8_t accel_config0;
@@ -654,20 +693,20 @@ icm42688_status_t icm42688_set_accel_config(
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
 
     accel_config0 = icm42688_build_accel_config0(accel_fs, accel_odr);
-    driver_status = icm42688_write_reg(ICM42688_REG_ACCEL_CONFIG0, accel_config0);
+    driver_status = icm42688_write_reg(me, ICM42688_REG_ACCEL_CONFIG0, accel_config0);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
 
     init_config.accel_fs = accel_fs;
     init_config.accel_odr = accel_odr;
-    icm42688_store_current_config(&init_config);
+    icm42688_store_current_config(me, &init_config);
 
     return ICM42688_STATUS_OK;
 }
@@ -677,8 +716,16 @@ icm42688_status_t icm42688_set_accel_config(
   * @param  raw_data：原始数据输出结构体指针。
   * @retval 返回驱动状态码。
   */
-icm42688_status_t icm42688_read_raw_data(icm42688_raw_data_t *raw_data)
+icm42688_status_t icm42688_read_raw_data(icm42688_t *me, icm42688_raw_data_t *raw_data)
 {
+    if ((me == 0) || (me->base.is_init == 0U)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
+    if (!icm42688_is_bound(me)) {
+        return ICM42688_STATUS_ERROR_PARAM;
+    }
+
     icm42688_status_t driver_status;
     uint8_t raw_buffer[ICM42688_RAW_DATA_LENGTH];
 
@@ -686,8 +733,7 @@ icm42688_status_t icm42688_read_raw_data(icm42688_raw_data_t *raw_data)
         return ICM42688_STATUS_ERROR_PARAM;
     }
 
-    driver_status = icm42688_read_regs(
-        ICM42688_REG_TEMP_DATA1, raw_buffer, ICM42688_RAW_DATA_LENGTH);
+    driver_status = icm42688_read_regs(me, ICM42688_REG_TEMP_DATA1, raw_buffer, ICM42688_RAW_DATA_LENGTH);
     if (driver_status != ICM42688_STATUS_OK) {
         return driver_status;
     }
@@ -929,13 +975,21 @@ icm42688_status_t icm42688_convert_raw_data(
     return ICM42688_STATUS_OK;
 }
 
-int8_t bsp_Icm42688Init(void)
+int8_t bsp_Icm42688Init(icm42688_t *me)
 {
-    return icm42688_status_to_legacy_ret(icm42688_init());
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
+    return icm42688_status_to_legacy_ret(icm42688_init(me));
 }
 
-int8_t bsp_IcmGetTemperature(int16_t *pTemp)
+int8_t bsp_IcmGetTemperature(icm42688_t *me, int16_t *pTemp)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_raw_data_t raw_data;
     icm42688_scaled_data_t scaled_data;
     icm42688_init_config_t init_config;
@@ -945,12 +999,12 @@ int8_t bsp_IcmGetTemperature(int16_t *pTemp)
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
@@ -964,8 +1018,12 @@ int8_t bsp_IcmGetTemperature(int16_t *pTemp)
     return 0;
 }
 
-int8_t bsp_IcmGetAccelerometer(icm42688RawData_t *accData)
+int8_t bsp_IcmGetAccelerometer(icm42688_t *me, icm42688RawData_t *accData)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_raw_data_t raw_data;
     icm42688_status_t driver_status;
 
@@ -973,7 +1031,7 @@ int8_t bsp_IcmGetAccelerometer(icm42688RawData_t *accData)
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
@@ -985,8 +1043,12 @@ int8_t bsp_IcmGetAccelerometer(icm42688RawData_t *accData)
     return 0;
 }
 
-int8_t bsp_IcmGetGyroscope(icm42688RawData_t *gyroData)
+int8_t bsp_IcmGetGyroscope(icm42688_t *me, icm42688RawData_t *gyroData)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_raw_data_t raw_data;
     icm42688_status_t driver_status;
 
@@ -994,7 +1056,7 @@ int8_t bsp_IcmGetGyroscope(icm42688RawData_t *gyroData)
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
@@ -1006,8 +1068,12 @@ int8_t bsp_IcmGetGyroscope(icm42688RawData_t *gyroData)
     return 0;
 }
 
-int8_t bsp_IcmGetAccelerometerReal(icm42688RealData_t *accData)
+int8_t bsp_IcmGetAccelerometerReal(icm42688_t *me, icm42688RealData_t *accData)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_raw_data_t raw_data;
     icm42688_scaled_data_t scaled_data;
@@ -1017,12 +1083,12 @@ int8_t bsp_IcmGetAccelerometerReal(icm42688RealData_t *accData)
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
@@ -1039,8 +1105,12 @@ int8_t bsp_IcmGetAccelerometerReal(icm42688RealData_t *accData)
     return 0;
 }
 
-int8_t bsp_IcmGetGyroscopeReal(icm42688RealData_t *gyroData)
+int8_t bsp_IcmGetGyroscopeReal(icm42688_t *me, icm42688RealData_t *gyroData)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_raw_data_t raw_data;
     icm42688_scaled_data_t scaled_data;
@@ -1050,12 +1120,12 @@ int8_t bsp_IcmGetGyroscopeReal(icm42688RealData_t *gyroData)
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
@@ -1072,8 +1142,12 @@ int8_t bsp_IcmGetGyroscopeReal(icm42688RealData_t *gyroData)
     return 0;
 }
 
-int8_t bsp_IcmGetRawData(icm42688RealData_t *accData, icm42688RealData_t *gyroData)
+int8_t bsp_IcmGetRawData(icm42688_t *me, icm42688RealData_t *accData, icm42688RealData_t *gyroData)
 {
+    if (!icm42688_is_bound(me)) {
+        return -2;
+    }
+
     icm42688_init_config_t init_config;
     icm42688_raw_data_t raw_data;
     icm42688_scaled_data_t scaled_data;
@@ -1084,12 +1158,12 @@ int8_t bsp_IcmGetRawData(icm42688RealData_t *accData, icm42688RealData_t *gyroDa
         return -2;
     }
 
-    driver_status = icm42688_read_raw_data(&raw_data);
+    driver_status = icm42688_read_raw_data(me, &raw_data);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }
 
-    driver_status = icm42688_get_current_config(&init_config);
+    driver_status = icm42688_get_current_config(me, &init_config);
     if (driver_status != ICM42688_STATUS_OK) {
         return icm42688_status_to_legacy_ret(driver_status);
     }

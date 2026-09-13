@@ -2,7 +2,7 @@
 #define OLED_MENU_H
 
 #include <stdint.h>
-#include "../2_device/OLED_driver.h"
+#include "../4_facade/oled_facade.h"
 
 typedef struct {
     const char *Name;

@@ -2,16 +2,14 @@
 #define MYUSED_MYDEVICES_OLED_DRIVER_H
 
 #include <stdint.h>
-#include "OLED_Data.h"
 #include "device_base.h"
 #include "device_ops.h"
 
 
 
-typedef void(*OLED_SCL)(uint8_t state);
-typedef void(*OLED_SDA)(uint8_t state);
+typedef void(*OLED_SCL)(void *context, uint8_t state);
+typedef void(*OLED_SDA)(void *context, uint8_t state);
 
-void OLED_I2C_Init(OLED_SCL SCL,OLED_SDA SDA);
 
 typedef struct oled_s oled_t;
 typedef device_display_ops_t oled_base_ops_t;
@@ -19,15 +17,18 @@ typedef device_display_ops_t oled_base_ops_t;
 typedef struct {
     OLED_SCL scl_write;
     OLED_SDA sda_write;
+    void *context; /**< Caller-owned bus context, valid for object lifetime. */
+    uint8_t addr7; /**< Explicit 7-bit address, normally 0x3C or 0x3D. */
 } oled_cfg_t;
 
 struct oled_s {
     device_base_t base;
     const oled_base_ops_t *ops;
     oled_cfg_t cfg;
-    uint8_t *framebuffer;
+    uint8_t framebuffer[8][128]; /**< Private 128 x 64 pixel buffer. */
 };
 
+/** @brief Bind one display and clear its buffer. Invalid cfg leaves is_init=0. */
 void OLED_InitDevice(oled_t *me, const oled_cfg_t *cfg);
 void OLED_InitDeviceEx(oled_t *me);
 void OLED_UpdateDevice(oled_t *me);
@@ -51,38 +52,41 @@ void OLED_ClearDevice(oled_t *me);
 /*函数声明*********************/
 
 /*初始化函数*/
-void OLED_Init(void);
+
 
 /*更新函数*/
-void OLED_Update(void);
-void OLED_UpdateArea(int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
+
+void OLED_UpdateAreaDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
 
 /*显存控制函数*/
-void OLED_Clear(void);
-void OLED_ClearArea(int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
-void OLED_Reverse(void);
-void OLED_ReverseArea(int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
 
+void OLED_ClearAreaDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
+void OLED_ReverseDevice(oled_t *me);
+void OLED_ReverseAreaDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Width, uint8_t Height);
+
+/** @name Instance drawing API
+ * @brief All calls use me; null/uninitialized objects are safe no-ops.
+ */
 /*显示函数*/
-void OLED_ShowChar(int16_t X, int16_t Y, char Char, uint8_t FontSize);
-void OLED_ShowString(int16_t X, int16_t Y, char *String, uint8_t FontSize);
-void OLED_ShowNum(int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
-void OLED_ShowSignedNum(int16_t X, int16_t Y, int32_t Number, uint8_t Length, uint8_t FontSize);
-void OLED_ShowHexNum(int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
-void OLED_ShowBinNum(int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
-void OLED_ShowFloatNum(int16_t X, int16_t Y, double Number, uint8_t IntLength, uint8_t FraLength, uint8_t FontSize);
-void OLED_ShowImage(int16_t X, int16_t Y, uint8_t Width, uint8_t Height, const uint8_t *Image);
-void OLED_Printf(int16_t X, int16_t Y, uint8_t FontSize, char *format, ...);
+void OLED_ShowCharDevice(oled_t *me, int16_t X, int16_t Y, char Char, uint8_t FontSize);
+void OLED_ShowStringDevice(oled_t *me, int16_t X, int16_t Y, char *String, uint8_t FontSize);
+void OLED_ShowNumDevice(oled_t *me, int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
+void OLED_ShowSignedNumDevice(oled_t *me, int16_t X, int16_t Y, int32_t Number, uint8_t Length, uint8_t FontSize);
+void OLED_ShowHexNumDevice(oled_t *me, int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
+void OLED_ShowBinNumDevice(oled_t *me, int16_t X, int16_t Y, uint32_t Number, uint8_t Length, uint8_t FontSize);
+void OLED_ShowFloatNumDevice(oled_t *me, int16_t X, int16_t Y, double Number, uint8_t IntLength, uint8_t FraLength, uint8_t FontSize);
+void OLED_ShowImageDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Width, uint8_t Height, const uint8_t *Image);
+void OLED_PrintfDevice(oled_t *me, int16_t X, int16_t Y, uint8_t FontSize, char *format, ...);
 
 /*绘图函数*/
-void OLED_DrawPoint(int16_t X, int16_t Y);
-uint8_t OLED_GetPoint(int16_t X, int16_t Y);
-void OLED_DrawLine(int16_t X0, int16_t Y0, int16_t X1, int16_t Y1);
-void OLED_DrawRectangle(int16_t X, int16_t Y, uint8_t Width, uint8_t Height, uint8_t IsFilled);
-void OLED_DrawTriangle(int16_t X0, int16_t Y0, int16_t X1, int16_t Y1, int16_t X2, int16_t Y2, uint8_t IsFilled);
-void OLED_DrawCircle(int16_t X, int16_t Y, uint8_t Radius, uint8_t IsFilled);
-void OLED_DrawEllipse(int16_t X, int16_t Y, uint8_t A, uint8_t B, uint8_t IsFilled);
-void OLED_DrawArc(int16_t X, int16_t Y, uint8_t Radius, int16_t StartAngle, int16_t EndAngle, uint8_t IsFilled);
+void OLED_DrawPointDevice(oled_t *me, int16_t X, int16_t Y);
+uint8_t OLED_GetPointDevice(oled_t *me, int16_t X, int16_t Y);
+void OLED_DrawLineDevice(oled_t *me, int16_t X0, int16_t Y0, int16_t X1, int16_t Y1);
+void OLED_DrawRectangleDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Width, uint8_t Height, uint8_t IsFilled);
+void OLED_DrawTriangleDevice(oled_t *me, int16_t X0, int16_t Y0, int16_t X1, int16_t Y1, int16_t X2, int16_t Y2, uint8_t IsFilled);
+void OLED_DrawCircleDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Radius, uint8_t IsFilled);
+void OLED_DrawEllipseDevice(oled_t *me, int16_t X, int16_t Y, uint8_t A, uint8_t B, uint8_t IsFilled);
+void OLED_DrawArcDevice(oled_t *me, int16_t X, int16_t Y, uint8_t Radius, int16_t StartAngle, int16_t EndAngle, uint8_t IsFilled);
 
 /*********************函数声明*/
 
