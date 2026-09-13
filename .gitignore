@@ -1,0 +1,43 @@
+# CMake / Ninja build trees
+/build/
+/cmake-build-*/
+**/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.ninja
+.ninja_deps
+.ninja_log
+
+# Firmware and linker output
+*.elf
+*.axf
+*.out
+*.hex
+*.bin
+*.map
+
+# Compiler intermediates and diagnostics
+*.o
+*.obj
+*.d
+*.su
+*.lst
+*.log
+
+# CubeMX temporary output
+/mx.scratch/
+
+# IDE and editor caches
+.vs/
+.idea/
+*.user
+*.bak
+*.orig
+*.tmp
+*.swp
+*.swo
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
